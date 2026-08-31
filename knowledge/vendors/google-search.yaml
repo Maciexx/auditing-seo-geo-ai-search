@@ -1,0 +1,30 @@
+rules:
+  - rule_id: google-noindex-001
+    vendor: google-search
+    statement: A supported noindex robots directive tells Google not to show the page in search results when Google can crawl and read the directive.
+    source_url: https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 180
+    confidence: 0.99
+    scoring_weight: 1
+  - rule_id: google-canonical-001
+    vendor: google-search
+    statement: rel=canonical is a strong canonicalization signal, while sitemap inclusion is a weaker signal.
+    source_url: https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 180
+    confidence: 0.99
+    scoring_weight: 1
+crawler_products:
+  - identifier: google-search
+    token: Googlebot
+    vendor: google-search
+    purpose: traditional_search
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: robots-rfc9309-001
+    verified_at: 2026-08-11

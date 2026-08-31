@@ -1,0 +1,14 @@
+<section class="report-section roadmap-section">
+  <p class="eyebrow">{{ t.roadmap_eyebrow }}</p>
+  <h2>{{ t.roadmap_heading }}</h2>
+  {% if data.recommendations %}
+    {% for recommendation in data.recommendations %}
+      <article class="roadmap-item">
+        <span class="priority">{{ recommendation.priority.value }}</span>
+        <div><h3>{{ recommendation.title }}</h3><p>{{ recommendation.implementation }}</p><p class="evidence-refs">{{ t.finding_label }}: {{ recommendation.finding_ids|join(", ") }} · {{ t.confidence }} {{ "%.0f"|format(recommendation.confidence * 100) }}%</p></div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="empty-state">{{ t.roadmap_empty }}</p>
+  {% endif %}
+</section>

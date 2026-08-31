@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="{{ data.report_locale }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ data.brand }} - {{ t.document_title }}</title>
+</head>
+<body>
+  {% include "components/cover.html" %}
+  <main>
+    {% include "components/executive-summary.html" %}
+    {% include "components/current-state.html" %}
+    {% include "components/score-card.html" %}
+    <section class="report-section findings-section">
+      <p class="eyebrow">{{ t.findings_eyebrow }}</p>
+      <h2>{{ t.findings_heading }}</h2>
+      {% if data.findings %}
+        {% for finding in data.findings %}
+          {% include "components/finding.html" %}
+        {% endfor %}
+      {% else %}
+        <p class="empty-state">{{ t.no_findings }}</p>
+      {% endif %}
+    </section>
+    {% include "components/ai-search.html" %}
+    {% include "components/entity-consistency.html" %}
+    {% include "components/roadmap.html" %}
+    {% include "components/evidence-appendix.html" %}
+    {% include "components/methodology.html" %}
+  </main>
+</body>
+</html>

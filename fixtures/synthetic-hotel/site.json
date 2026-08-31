@@ -1,0 +1,8 @@
+{
+  "fixture_kind": "synthetic",
+  "brand": "Example Lakeside Hotel",
+  "type": "Hotel",
+  "domain": "lakeside-hotel.example",
+  "location": "Example Bay, Poland",
+  "languages": ["pl", "en"]
+}

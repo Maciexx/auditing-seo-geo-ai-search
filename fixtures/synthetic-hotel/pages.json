@@ -1,0 +1,22 @@
+{
+  "/robots.txt": {
+    "status": 200,
+    "content_type": "text/plain",
+    "body": "User-agent: *\nAllow: /\nSitemap: https://lakeside-hotel.example/sitemap.xml\n"
+  },
+  "/sitemap.xml": {
+    "status": 200,
+    "content_type": "application/xml",
+    "body": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://lakeside-hotel.example/</loc></url><url><loc>https://lakeside-hotel.example/en</loc></url></urlset>"
+  },
+  "/": {
+    "status": 200,
+    "content_type": "text/html",
+    "body": "<html lang=\"pl\"><head><title>Example Lakeside Hotel</title><meta name=\"description\" content=\"Przykładowy pobyt nad jeziorem\"><link rel=\"canonical\" href=\"https://lakeside-hotel.example/\"><link rel=\"alternate\" hreflang=\"en\" href=\"https://lakeside-hotel.example/en\"><script type=\"application/ld+json\">{\"@context\":\"https://schema.org\",\"@type\":\"Hotel\",\"name\":\"Example Lakeside Hotel\",\"address\":\"Example Bay, Poland\"}{\"@type\":\"Hotel\"}</script></head><body><h1>Example Lakeside Hotel</h1><h2>Przykładowe pobyty nad jeziorem</h2><a href=\"/en\">English</a></body></html>"
+  },
+  "/en": {
+    "status": 200,
+    "content_type": "text/html",
+    "body": "<html lang=\"en\"><head><title>Example Lakeside Hotel</title><meta name=\"description\" content=\"Sample lakeside stays\"><link rel=\"canonical\" href=\"https://lakeside-hotel.example/\"><link rel=\"alternate\" hreflang=\"pl\" href=\"https://lakeside-hotel.example/\"><script type=\"application/ld+json\">{\"@type\":\"Hotel\",\"name\":\"Example Lakeside Hotel\"}{\"numberOfRooms\":24}</script></head><body><h1>Sample lakeside stays</h1><h2>Seasonal activities</h2></body></html>"
+  }
+}

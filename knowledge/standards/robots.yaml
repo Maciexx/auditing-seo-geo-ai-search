@@ -1,0 +1,20 @@
+rules:
+  - rule_id: robots-rfc9309-001
+    vendor: ietf
+    statement: robots.txt is located at the top-level /robots.txt path and uses user-agent groups with allow and disallow rules.
+    source_url: https://www.rfc-editor.org/rfc/rfc9309.html
+    source_type: formal_standard
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 365
+    confidence: 1
+    scoring_weight: 1
+crawler_products:
+  - identifier: generic-rep
+    token: "*"
+    vendor: ietf
+    purpose: generic
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: robots-rfc9309-001
+    verified_at: 2026-08-11

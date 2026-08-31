@@ -1,0 +1,10 @@
+<section class="report-section executive-summary">
+  <p class="eyebrow">{{ t.executive_eyebrow }}</p>
+  <h2>{{ t.executive_heading }}</h2>
+  <p class="lead">{{ data.executive_summary }}</p>
+  <div class="summary-grid">
+    <div><strong>{{ data.findings|length }}</strong><span>{{ t.summary_findings }}</span></div>
+    <div><strong>{{ data.recommendations|length }}</strong><span>{{ t.summary_actions }}</span></div>
+    <div><strong>{{ data.evidence_appendix|length }}</strong><span>{{ t.summary_evidence }}</span></div>
+  </div>
+</section>

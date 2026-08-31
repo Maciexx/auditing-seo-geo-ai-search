@@ -1,0 +1,31 @@
+<section class="report-section scorecard-section">
+  <p class="eyebrow">{{ t.score_eyebrow }}</p>
+  <h2>{{ t.score_heading }}</h2>
+  <div class="score-grid">
+    {% for score in data.scores %}
+      <article class="score-card">
+        <div class="score-heading">
+          <h3>{{ t.score_names[score.name] }}</h3>
+          <span class="state state-{{ score.state.value|lower }}">{{ t.states[score.state.value] }}</span>
+        </div>
+        {% if score.value is none %}
+          <p class="score-value unavailable">{{ t.unavailable }}</p>
+          <p class="score-reason">{{ score.unavailable_reason }}</p>
+        {% elif score.value == 100 and score.coverage < 1 %}
+          <p class="score-value">100 <small>{{ t.in_assessed_scope }}</small></p>
+          <p class="score-reason">{{ t.limited_evidence }}</p>
+        {% else %}
+          <p class="score-value">{{ "%.0f"|format(score.value) }}<small>/100</small></p>
+        {% endif %}
+        <div class="meter"><span style="width: {{ "%.0f"|format(score.coverage * 100) }}%"></span></div>
+        <p class="score-meta">{{ t.coverage }} {{ "%.0f"|format(score.coverage * 100) }}% · {{ t.confidence }} {{ "%.0f"|format(score.confidence * 100) }}%</p>
+        {% if score.explanation_finding_ids %}
+          <p class="score-links">{{ t.explained_by }} {{ score.explanation_finding_ids|join(", ") }}</p>
+        {% endif %}
+        {% if score.explanation_observation_ids %}
+          <p class="score-links">{{ t.observed_in }} {{ score.explanation_observation_ids|join(", ") }}</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+</section>

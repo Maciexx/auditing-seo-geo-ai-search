@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auditing-seo-geo-ai-search"
+version = "0.1.1"
+description = "Evidence-led SEO, GEO, and AI Search audit Agent Skill"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "httpx>=0.27,<1",
+  "Jinja2==3.1.6",
+  "pydantic>=2.8,<3",
+  "PyYAML>=6,<7",
+  "reportlab==5.0.0",
+  "WeasyPrint==69.0",
+]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.11", "pypdf==6.16.0", "pytest>=8,<9", "respx>=0.21,<1", "ruff>=0.6", "types-PyYAML>=6"]
+
+[project.scripts]
+ai-search-audit = "ai_search_audit.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_search_audit"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"LICENSES/OFL-NotoSans.txt" = "ai_search_audit/licenses/OFL-NotoSans.txt"
+"LICENSES/geo-optimizer-attribution.md" = "ai_search_audit/licenses/geo-optimizer-attribution.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["ai_search_audit"]
+mypy_path = "src"

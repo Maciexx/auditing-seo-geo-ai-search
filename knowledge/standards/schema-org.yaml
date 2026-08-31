@@ -1,0 +1,21 @@
+rules:
+  - rule_id: schema-org-jsonld-001
+    vendor: schema-org
+    statement: Schema.org vocabulary can be expressed as JSON-LD to describe entities and relationships in machine-readable form.
+    source_url: https://schema.org/docs/documents.html
+    source_type: formal_standard
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 365
+    confidence: 0.98
+    scoring_weight: 0.75
+  - rule_id: entity-consistency-001
+    vendor: schema-org
+    statement: Consistent public organization facts help identify the same entity across sources; conflicting independently observed values require verification.
+    source_url: https://schema.org/Organization
+    source_type: established_industry_practice
+    evidence_level: D
+    verified_at: 2026-08-11
+    review_interval_days: 365
+    confidence: 0.85
+    scoring_weight: 0.75

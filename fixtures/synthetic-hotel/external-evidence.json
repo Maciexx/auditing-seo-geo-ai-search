@@ -1,0 +1,40 @@
+[
+  {
+    "url": "https://press.example/example-lakeside-hotel",
+    "publisher": "Independent Travel Press",
+    "source_class": "press",
+    "independent_source_key": "travel-press-profile",
+    "claims": {
+      "brand": "Example Lakeside Hotel",
+      "rooms": "24",
+      "location": "Example Bay, Poland",
+      "positioning": "boutique",
+      "seasonality": "seasonal demand",
+      "differentiator": "guided nature stays"
+    },
+    "confidence": 0.85
+  },
+  {
+    "url": "https://ota.example/hotel/example-lakeside-hotel",
+    "publisher": "Travel OTA",
+    "source_class": "ota",
+    "independent_source_key": "ota-listing",
+    "claims": {
+      "brand": "Example Lakeside Hotel",
+      "rooms": "21",
+      "location": "Example Bay, Poland"
+    },
+    "confidence": 0.8
+  },
+  {
+    "url": "https://profiles.example/example-lakeside-hotel",
+    "publisher": "Public Business Profile",
+    "source_class": "business_profile",
+    "independent_source_key": "business-profile",
+    "claims": {
+      "brand": "Example Lakeside Hotel",
+      "location": "Example Bay, Poland"
+    },
+    "confidence": 0.9
+  }
+]

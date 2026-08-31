@@ -1,0 +1,12 @@
+rules:
+  - rule_id: sitemap-protocol-001
+    vendor: sitemaps-org
+    statement: XML sitemaps list canonical URL locations and may be declared in robots.txt.
+    source_url: https://www.sitemaps.org/protocol.html
+    source_type: formal_standard
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 365
+    confidence: 0.99
+    scoring_weight: 0.75
+

@@ -1,0 +1,26 @@
+<section class="report-section">
+  <p class="eyebrow">{{ t.entity_eyebrow }}</p>
+  <h2>{{ t.entity_heading }}</h2>
+  {% if data.entity_consistency.facts %}
+    <table class="entity-table">
+      <colgroup>
+        <col class="fact">
+        <col class="values">
+        <col class="records">
+      </colgroup>
+      <thead><tr><th>{{ t.fact }}</th><th>{{ t.observed_values }}</th><th>{{ t.evidence_records }}</th></tr></thead>
+      <tbody>
+      {% for fact in data.entity_consistency.facts %}
+        <tr>
+          <td>{{ fact.fact|replace("_", " ") }}</td>
+          <td>{% for value in fact.values %}{{ value.value }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+          <td>{% for value in fact.values %}{{ value.evidence_ids|join(", ") }}{% if not loop.last %}; {% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty-state">{{ t.entity_empty }}</p>
+  {% endif %}
+  {% if data.entity_consistency.finding_ids %}<p class="evidence-refs">{{ t.conflict_findings }}: {{ data.entity_consistency.finding_ids|join(", ") }}</p>{% endif %}
+</section>

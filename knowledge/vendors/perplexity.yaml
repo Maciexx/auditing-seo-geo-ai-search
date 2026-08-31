@@ -1,0 +1,28 @@
+rules:
+  - rule_id: perplexity-bots-001
+    vendor: perplexity
+    statement: Perplexity documents crawler user agents and robots.txt controls; access alone does not guarantee inclusion or citation.
+    source_url: https://docs.perplexity.ai/docs/resources/perplexity-crawlers
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 90
+    confidence: 0.9
+    scoring_weight: 0.5
+crawler_products:
+  - identifier: perplexity-search
+    token: PerplexityBot
+    vendor: perplexity
+    purpose: search_citation
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: perplexity-bots-001
+    verified_at: 2026-08-11
+  - identifier: perplexity-user
+    token: Perplexity-User
+    vendor: perplexity
+    purpose: user_fetch
+    control_type: request_user_agent
+    robots_txt_respected: false
+    source_rule: perplexity-bots-001
+    verified_at: 2026-08-11

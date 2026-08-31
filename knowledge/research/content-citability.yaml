@@ -1,0 +1,11 @@
+rules:
+  - rule_id: content-citability-001
+    vendor: google-search
+    statement: Descriptive titles, headings, summaries, and concrete page text are observable content-quality signals; this composite readiness check does not predict AI citation.
+    source_url: https://developers.google.com/search/docs/fundamentals/seo-starter-guide
+    source_type: official_vendor_documentation_with_audit_inference
+    evidence_level: B
+    verified_at: 2026-08-11
+    review_interval_days: 180
+    confidence: 0.85
+    scoring_weight: 0.75

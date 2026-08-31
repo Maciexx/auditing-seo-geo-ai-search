@@ -1,0 +1,17 @@
+<section class="report-section methodology-section">
+  <p class="eyebrow">{{ t.methodology_eyebrow }}</p>
+  <h2>{{ t.methodology_heading }}</h2>
+  <h3>{{ t.methodology }}</h3>
+  <ul>{% for item in data.methodology %}<li>{{ item }}</li>{% endfor %}</ul>
+  <h3>{{ t.limitations }}</h3>
+  <ul>{% for item in data.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+  <div class="version-panel">
+    <div><span>{{ t.audit_engine }}</span><strong>{{ data.audit_engine_version }}</strong></div>
+    <div><span>{{ t.ruleset }}</span><strong>{{ data.ruleset_version }}</strong></div>
+    <div><span>{{ t.report_schema }}</span><strong>{{ data.report_schema_version }}</strong></div>
+    <div><span>{{ t.report_template }}</span><strong>{{ data.report_template_version }}</strong></div>
+    <div><span>{{ t.audit_timestamp }}</span><strong>{{ data.audit_timestamp.isoformat() }}</strong></div>
+    <div><span>{{ t.target_domain }}</span><strong>{{ data.target_domain }}</strong></div>
+  </div>
+  <p class="fingerprint-note">{{ t.fingerprint_note }} {{ data.renderer.environment_fingerprint[:16] }}…</p>
+</section>

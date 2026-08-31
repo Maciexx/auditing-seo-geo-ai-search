@@ -1,0 +1,24 @@
+{
+  "required_source_classes": ["press", "ota", "business_profile"],
+  "required_conflict": "room_count",
+  "required_conflict_values": ["21", "24"],
+  "required_languages": ["pl", "en"],
+  "forbidden_score": "GEO Score",
+  "prompt_pack_version": "1.1.0",
+  "minimum_prompt_count": 10,
+  "minimum_technical_checks": 4,
+  "minimum_content_checks": 4,
+  "unavailable_scores": ["Measurement Maturity", "Observed AI Visibility"],
+  "uncertainty_terms": ["may", "could"],
+  "invalid_json_ld_affected_pages": 2,
+  "invalid_json_ld_error": "Extra data",
+  "report_schema_version": "1.0.0",
+  "report_template_version": "1.0.0",
+  "required_pdf_sections": [
+    "Executive Summary",
+    "Readiness Scorecard",
+    "Prioritized Findings",
+    "Evidence Appendix",
+    "Methodology and Limitations"
+  ]
+}

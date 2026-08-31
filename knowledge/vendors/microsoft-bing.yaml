@@ -1,0 +1,20 @@
+rules:
+  - rule_id: bing-robots-001
+    vendor: microsoft-bing
+    statement: Bing uses robots.txt directives to determine which paths its crawler may request.
+    source_url: https://www.bing.com/webmasters/help/how-to-create-a-robots-txt-file-cb7c31ec
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 180
+    confidence: 0.98
+    scoring_weight: 1
+crawler_products:
+  - identifier: microsoft-search
+    token: Bingbot
+    vendor: microsoft-bing
+    purpose: traditional_search
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: bing-robots-001
+    verified_at: 2026-08-11

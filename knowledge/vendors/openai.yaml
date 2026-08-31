@@ -1,0 +1,28 @@
+rules:
+  - rule_id: openai-oai-searchbot-001
+    vendor: openai
+    statement: OAI-SearchBot is used to link to and surface websites in ChatGPT search, while GPTBot is the distinct user agent for potential model training; access is not a guaranteed citation outcome.
+    source_url: https://help.openai.com/en/articles/12627856-publishers-and-developers-faq
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-08-11
+    review_interval_days: 90
+    confidence: 0.95
+    scoring_weight: 0.5
+crawler_products:
+  - identifier: openai-search
+    token: OAI-SearchBot
+    vendor: openai
+    purpose: search_citation
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: openai-oai-searchbot-001
+    verified_at: 2026-08-11
+  - identifier: openai-training
+    token: GPTBot
+    vendor: openai
+    purpose: training
+    control_type: robots_txt
+    robots_txt_respected: true
+    source_rule: openai-oai-searchbot-001
+    verified_at: 2026-08-11

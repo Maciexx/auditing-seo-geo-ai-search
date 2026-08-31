@@ -1,0 +1,4 @@
+interface:
+  display_name: "SEO, GEO & AI Search Audit"
+  short_description: "Evidence-led audits with client-ready PDF"
+  default_prompt: "Use $auditing-seo-geo-ai-search to audit this organization’s search and AI visibility and deliver a client-ready PDF."

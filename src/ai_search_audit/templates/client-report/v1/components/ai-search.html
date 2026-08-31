@@ -1,0 +1,14 @@
+<section class="report-section">
+  <p class="eyebrow">{{ t.ai_eyebrow }}</p>
+  <h2>{{ t.ai_heading }}</h2>
+  {% if data.ai_search.access_finding_ids %}
+    <p>{{ data.ai_search.access_finding_ids|length }} {{ t.ai_blocked_findings }}</p>
+    <p class="evidence-refs">{{ t.findings_label }}: {{ data.ai_search.access_finding_ids|join(", ") }}</p>
+  {% else %}
+    <p>{{ t.ai_no_blocked }}</p>
+  {% endif %}
+  <div class="callout">
+    <strong>{{ t.observed_ai_visibility }}: {{ t.states[data.ai_search.observed_visibility_state.value] }}</strong>
+    <p>{{ t.ai_visibility_note_prefix }} {{ data.ai_search.prompt_count }}{% if data.ai_search.prompt_pack_version %} (v{{ data.ai_search.prompt_pack_version }}){% endif %} {{ t.ai_visibility_note_suffix }}</p>
+  </div>
+</section>
