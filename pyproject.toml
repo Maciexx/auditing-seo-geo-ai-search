@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "auditing-seo-geo-ai-search"
-version = "0.1.1"
+version = "0.2.0"
 description = "Evidence-led SEO, GEO, and AI Search audit Agent Skill"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,21 +12,42 @@ dependencies = [
   "httpx>=0.27,<1",
   "Jinja2==3.1.6",
   "pydantic>=2.8,<3",
+  "pypdf==6.16.0",
   "PyYAML>=6,<7",
   "reportlab==5.0.0",
   "WeasyPrint==69.0",
 ]
 
 [project.optional-dependencies]
-dev = ["mypy>=1.11", "pypdf==6.16.0", "pytest>=8,<9", "respx>=0.21,<1", "ruff>=0.6", "types-PyYAML>=6"]
+dev = [
+  "build>=1.2,<2",
+  "mypy>=1.11",
+  "pytest>=8,<9",
+  "respx>=0.21,<1",
+  "ruff>=0.6",
+  "types-PyYAML>=6",
+]
 
 [project.scripts]
 ai-search-audit = "ai_search_audit.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_search_audit"]
+only-packages = true
+artifacts = ["src/ai_search_audit/templates/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/SKILL.md", "/README.md", "/CHANGELOG.md", "/LICENSE", "/LICENSES/**",
+  "/SECURITY.md", "/CONTRIBUTING.md", "/pyproject.toml", "/.gitignore",
+  "/.github/workflows/*.yml", "/agents/**", "/fixtures/**", "/knowledge/**",
+  "/references/**", "/scripts/*.py", "/src/ai_search_audit/**", "/tests/*.py",
+]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pdf", "**/*.csv", "**/*.xlsx"]
 
 [tool.hatch.build.targets.wheel.force-include]
+"scripts/render_client_pdf.py" = "ai_search_audit/assets/render_client_pdf.py"
+"knowledge" = "ai_search_audit/knowledge_registry"
 "LICENSES/OFL-NotoSans.txt" = "ai_search_audit/licenses/OFL-NotoSans.txt"
 "LICENSES/geo-optimizer-attribution.md" = "ai_search_audit/licenses/geo-optimizer-attribution.md"
 

@@ -37,3 +37,5 @@ jobs:
         run: mypy src
       - name: Skill validation
         run: python scripts/validate_skill.py .
+      - name: Public release scan
+        run: python scripts/validate_public_release.py .

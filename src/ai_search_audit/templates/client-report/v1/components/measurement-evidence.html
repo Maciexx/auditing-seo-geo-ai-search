@@ -1,0 +1,53 @@
+{% if data.measurement %}
+<section class="report-section measurement-section">
+  <p class="eyebrow">{{ t.measurement_eyebrow }}</p>
+  <h2>{{ t.measurement_heading }}</h2>
+  <table class="measurement-table">
+    <thead><tr><th>{{ t.metric }}</th><th>{{ t.state_label }}</th><th>{{ t.observed_value }}</th><th>{{ t.data_quality }}</th><th>{{ t.window }}</th></tr></thead>
+    <tbody>
+    {% for metric in data.measurement.metrics %}
+      <tr>
+        <td><strong>{{ metric.metric }}</strong><br><span class="muted-detail">{{ metric.metric_id }}</span></td>
+        <td><span class="state state-{{ metric.state.value | lower }}">{{ t.states[metric.state.value] }}</span></td>
+        <td>
+          {% if metric.state.value in ["AVAILABLE", "PARTIAL"] %}{{ metric.value | format_number }} {{ metric.unit }}{% else %}{{ t.not_numeric }}{% endif %}
+        </td>
+        <td>{{ t.coverage }} {{ (metric.coverage * 100) | round | int }}%<br>{{ t.confidence }} {{ (metric.confidence * 100) | round | int }}%</td>
+        <td>{% if metric.window %}{{ metric.window.start.isoformat() }} - {{ metric.window.end.isoformat() }}{% else %}{{ t.not_available }}{% endif %}</td>
+      </tr>
+      {% if metric.segments or metric.definitions %}
+      <tr class="metric-detail-row"><td colspan="5">
+        {% if metric.segments %}<strong>{{ t.segments }}:</strong> {{ metric.segments | join(", ") }}{% endif %}{% if metric.segments and metric.definitions %}<br>{% endif %}
+        {% if metric.definitions %}<strong>{{ t.definitions }}:</strong> {{ metric.definitions | join(", ") }}{% endif %}
+      </td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if data.measurement.limitations %}
+    <div class="measurement-limitations">
+      <h3>{{ t.measurement_limitations }}</h3>
+      <ul>
+      {% for item in data.measurement.limitations %}
+        <li><strong>{{ item.metric_id }}</strong>: {{ t.measurement_state_limitations[item.state.value] }}</li>
+      {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+  <h3>{{ t.measurement_sources }}</h3>
+  <table class="source-table">
+    <thead><tr><th>{{ t.source }}</th><th>{{ t.platform }}</th><th>{{ t.report_type }}</th><th>{{ t.source_window }}</th><th>{{ t.processed }}</th></tr></thead>
+    <tbody>
+    {% for source in data.measurement.sources %}
+      <tr>
+        <td>{{ source.source_id }}<br><span class="muted-detail">{{ source.filename }} - {{ source.sha256[:12] }}</span></td>
+        <td>{{ t.platforms[source.platform.value] }}</td>
+        <td>{{ source.report_type }}</td>
+        <td>{% if source.date_range %}{{ source.date_range.start.isoformat() }} - {{ source.date_range.end.isoformat() }}{% else %}{{ t.not_available }}{% endif %}</td>
+        <td>{{ source.processed_at.isoformat() }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

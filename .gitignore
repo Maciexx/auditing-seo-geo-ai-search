@@ -10,5 +10,10 @@ build/
 audit-output/
 output/
 tmp/
+clients/
+owned-input/
+.staging/
 .DS_Store
 *.pdf
+*.csv
+*.xlsx

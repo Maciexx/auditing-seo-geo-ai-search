@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "local-example",
+  "canonical_domain": "local.example",
+  "owner_facts": [
+    {
+      "fact_id": "service-area",
+      "field": "service_area",
+      "value": "Example District",
+      "source_id": "business-profile",
+      "as_of": "2026-08-31"
+    }
+  ],
+  "metric_series": [
+    {
+      "metric_id": "profile-views",
+      "source_id": "business-profile",
+      "metric": "profile views",
+      "unit": "count",
+      "state": "UNKNOWN",
+      "coverage": 0.0,
+      "confidence": 0.5,
+      "points": []
+    }
+  ],
+  "cited_examples": [
+    {
+      "example_id": "public-location-example",
+      "source_id": "business-profile",
+      "description": "Fabricated public location listing",
+      "citation": "https://local.example/location",
+      "non_sensitive": true
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "business-profile",
+      "filename": "business-profile.example.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "byte_count": 192,
+      "platform": "google_business_profile",
+      "report_type": "profile-performance",
+      "date_range": {
+        "start": "2026-08-01",
+        "end": "2026-08-31"
+      },
+      "filters": [],
+      "exported_at": "2026-09-01T08:30:00Z"
+    }
+  ]
+}

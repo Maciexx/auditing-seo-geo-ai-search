@@ -63,6 +63,20 @@ class KnowledgeRegistry(BaseModel):
         )
 
 
+def default_registry_root() -> Path:
+    """Return the packaged registry, with a constrained source-checkout fallback."""
+    package_root = Path(__file__).resolve().parent
+    packaged_root = package_root / "knowledge_registry"
+    if packaged_root.is_dir():
+        return packaged_root
+
+    repository_root = package_root.parents[1]
+    source_package = repository_root / "src" / "ai_search_audit"
+    if source_package.is_dir() and source_package.samefile(package_root):
+        return repository_root / "knowledge"
+    return packaged_root
+
+
 def load_registry(root: Path) -> KnowledgeRegistry:
     try:
         metadata = yaml.safe_load((root / "registry.yaml").read_text(encoding="utf-8"))

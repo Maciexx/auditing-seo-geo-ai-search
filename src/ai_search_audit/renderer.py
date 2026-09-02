@@ -21,8 +21,10 @@ from .report_models import (
     validate_report_compatibility,
 )
 
-TEMPLATE_VERSION = "1.0.0"
-TEMPLATE_ROOT = Path(__file__).parent / "templates" / "client-report" / "v1"
+TEMPLATE_VERSION = "1.2.0"
+TEMPLATE_DIRECTORY_BY_VERSION = {TEMPLATE_VERSION: "v1"}
+TEMPLATE_DIRECTORY = TEMPLATE_DIRECTORY_BY_VERSION[TEMPLATE_VERSION]
+TEMPLATE_ROOT = Path(__file__).parent / "templates" / "client-report" / TEMPLATE_DIRECTORY
 FONT_ROOT = TEMPLATE_ROOT / "assets" / "fonts"
 
 
@@ -103,13 +105,21 @@ def local_asset_fetcher(url: str, *args: object, **kwargs: object) -> dict[str, 
 
 
 def _jinja_environment() -> Environment:
-    return Environment(
-        loader=PackageLoader("ai_search_audit", "templates/client-report/v1"),
+    environment = Environment(
+        loader=PackageLoader("ai_search_audit", f"templates/client-report/{TEMPLATE_DIRECTORY}"),
         autoescape=select_autoescape(("html", "xml")),
         undefined=StrictUndefined,
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    environment.filters["format_number"] = _format_number
+    return environment
+
+
+def _format_number(value: float | None) -> str:
+    if value is None:
+        return ""
+    return format(value, ".12g")
 
 
 def _translations(locale: str) -> dict[str, Any]:

@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
+import json
+import os
 import re
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, TextStringObject
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -44,6 +50,29 @@ PALE_RED = colors.HexColor("#F6E9E6")
 TEXT = colors.HexColor("#2E3331")
 MUTED = colors.HexColor("#68706C")
 GRID = colors.HexColor("#D5D8D4")
+
+LABELS = {
+    "pl": {
+        "cover": "AUDYT WIDOCZNOŚCI CYFROWEJ",
+        "version": "Wersja",
+        "page": "Strona",
+        "section": "SEKCJA",
+        "scope": "Audyt zewnętrzny oparty na dostępnych dowodach",
+        "subject": "Audyt widoczności w Google i wyszukiwarkach generatywnych",
+        "author": "Audyt zewnętrzny",
+        "confidentiality": "Poufne - materiał dla właścicieli",
+    },
+    "en": {
+        "cover": "DIGITAL VISIBILITY AUDIT",
+        "version": "Version",
+        "page": "Page",
+        "section": "SECTION",
+        "scope": "External audit based on available evidence",
+        "subject": "Visibility in Google and generative search",
+        "author": "External audit",
+        "confidentiality": "Confidential - for the owners",
+    },
+}
 
 
 def first_existing(candidates: Iterable[str]) -> str | None:
@@ -291,6 +320,7 @@ class CoverPage(Flowable):
         hero: Path | None,
         fonts: dict[str, str],
         styles: dict[str, ParagraphStyle],
+        locale: str = "pl",
     ) -> None:
         super().__init__()
         self.width = PAGE_WIDTH
@@ -304,6 +334,7 @@ class CoverPage(Flowable):
         self.hero = hero
         self.fonts = fonts
         self.styles = styles
+        self.labels = LABELS[locale]
 
     def wrap(self, avail_width, avail_height):
         return avail_width, avail_height
@@ -355,7 +386,7 @@ class CoverPage(Flowable):
             origin_x + 39, PAGE_HEIGHT - 50 + origin_y, origin_x + 140, PAGE_HEIGHT - 50 + origin_y
         )
 
-        label = Paragraph("AUDYT WIDOCZNOŚCI CYFROWEJ", self.styles["cover_label"])
+        label = Paragraph(self.labels["cover"], self.styles["cover_label"])
         label.wrapOn(canvas, 470, 30)
         label.drawOn(canvas, origin_x + 39, 251 + origin_y)
 
@@ -382,7 +413,7 @@ class CoverPage(Flowable):
         canvas.drawString(
             origin_x + 39,
             42 + origin_y,
-            f"Audyt zewnętrzny oparty na dostępnych dowodach | Wersja {self.version} | {self.date}",
+            f"{self.labels['scope']} | {self.labels['version']} {self.version} | {self.date}",
         )
         canvas.drawRightString(origin_x + PAGE_WIDTH - 39, 42 + origin_y, self.confidentiality)
         canvas.restoreState()
@@ -390,13 +421,21 @@ class CoverPage(Flowable):
 
 class AuditDocTemplate(BaseDocTemplate):
     def __init__(
-        self, filename: str, client: str, date: str, version: str, fonts: dict[str, str], **kwargs
+        self,
+        filename: str,
+        client: str,
+        date: str,
+        version: str,
+        fonts: dict[str, str],
+        locale: str = "pl",
+        **kwargs,
     ):
         super().__init__(filename, pagesize=A4, **kwargs)
         self.client = client
         self.report_date = date
         self.version = version
         self.fonts = fonts
+        self.labels = LABELS[locale]
 
         cover_frame = Frame(
             0,
@@ -438,8 +477,10 @@ class AuditDocTemplate(BaseDocTemplate):
 
         canvas.setFont(self.fonts["sans"], 6.4)
         canvas.setFillColor(MUTED)
-        canvas.drawString(18 * mm, 10 * mm, f"Wersja {self.version} - {self.report_date}")
-        canvas.drawCentredString(PAGE_WIDTH / 2, 10 * mm, f"Strona {doc.page - 1}")
+        canvas.drawString(
+            18 * mm, 10 * mm, f"{self.labels['version']} {self.version} - {self.report_date}"
+        )
+        canvas.drawCentredString(PAGE_WIDTH / 2, 10 * mm, f"{self.labels['page']} {doc.page - 1}")
         canvas.restoreState()
 
 
@@ -516,7 +557,11 @@ def callout_flowable(
 
 
 def markdown_to_story(
-    markdown: str, styles: dict[str, ParagraphStyle], fonts: dict[str, str], content_width: float
+    markdown: str,
+    styles: dict[str, ParagraphStyle],
+    fonts: dict[str, str],
+    content_width: float,
+    locale: str = "pl",
 ):
     lines = sanitize_text(markdown).splitlines()
     story = []
@@ -542,7 +587,9 @@ def markdown_to_story(
             first_section = False
             section_index += 1
             title = strip_markdown(stripped[3:])
-            story.append(Paragraph(f"SEKCJA {section_index:02d}", styles["kicker"]))
+            story.append(
+                Paragraph(f"{LABELS[locale]['section']} {section_index:02d}", styles["kicker"])
+            )
             story.append(Paragraph(inline_markup(title, fonts), styles["section"]))
             index += 1
             continue
@@ -656,46 +703,112 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("output_pdf", type=Path)
     parser.add_argument("--client", required=True)
     parser.add_argument("--title", default="AI Search & SEO Audit")
-    parser.add_argument("--subtitle", default="Widocznosc w Google i wyszukiwarkach opartych na AI")
+    parser.add_argument("--subtitle")
     parser.add_argument("--date", required=True)
     parser.add_argument("--version", default="1.0")
-    parser.add_argument("--hero", type=Path)
-    parser.add_argument("--author", default="Audyt zewnetrzny")
-    parser.add_argument("--confidentiality", default="Poufne - materiał dla właścicieli")
+    parser.add_argument("--audit-id", default="")
+    parser.add_argument("--locale", choices=("pl", "en"), default="pl")
+    cover = parser.add_mutually_exclusive_group()
+    cover.add_argument("--hero", type=Path)
+    cover.add_argument("--no-hero-reason")
+    parser.add_argument("--author")
+    parser.add_argument("--confidentiality")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.hero is not None and not args.hero.is_file():
+        raise ValueError("explicit hero image does not exist")
+    if args.no_hero_reason is not None and not args.no_hero_reason.strip():
+        raise ValueError("no-hero reason cannot be empty")
+    if args.output_pdf.resolve() in {
+        args.input_markdown.resolve(),
+        args.hero.resolve() if args.hero else args.input_markdown.resolve(),
+    }:
+        raise ValueError("output PDF must not replace an input")
     markdown = args.input_markdown.read_text(encoding="utf-8")
     fonts = register_fonts()
     styles = make_styles(fonts)
     args.output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".client-render-", dir=args.output_pdf.parent
+    ) as temporary:
+        raw_pdf = Path(temporary) / "render.pdf"
+        _render(args, markdown, fonts, styles, raw_pdf)
+        reader = PdfReader(raw_pdf)
+        writer = PdfWriter(clone_from=reader)
+        writer.add_metadata(
+            {
+                "/ClientEditionTemplate": "editorial-v1",
+                "/ClientEditionSourceSHA256": hashlib.sha256(
+                    args.input_markdown.read_bytes()
+                ).hexdigest(),
+                "/ClientEditionHeroSHA256": hashlib.sha256(args.hero.read_bytes()).hexdigest()
+                if args.hero
+                else "none",
+                "/ClientEditionNoHeroReason": args.no_hero_reason or "",
+                "/ClientEditionLocale": args.locale,
+                "/ClientEditionClient": args.client,
+                "/ClientEditionVersion": args.version,
+                "/ClientEditionAuditID": args.audit_id,
+                "/ClientEditionRenderOptions": json.dumps(
+                    {
+                        "client": args.client,
+                        "title": args.title,
+                        "subtitle": args.subtitle or LABELS[args.locale]["subject"],
+                        "date": args.date,
+                        "version": args.version,
+                        "locale": args.locale,
+                        "audit-id": args.audit_id,
+                        "author": args.author or LABELS[args.locale]["author"],
+                        "confidentiality": args.confidentiality
+                        or LABELS[args.locale]["confidentiality"],
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+                "/ClientEditionRendererSHA256": hashlib.sha256(
+                    Path(__file__).read_bytes()
+                ).hexdigest(),
+            }
+        )
+        writer.root_object[NameObject("/Lang")] = TextStringObject(args.locale)
+        staged = Path(temporary) / "client.pdf"
+        writer.write(staged)
+        os.replace(staged, args.output_pdf)
+
+
+def _render(args, markdown, fonts, styles, output):
+    labels = LABELS[args.locale]
 
     document = AuditDocTemplate(
-        str(args.output_pdf),
+        str(output),
         client=args.client,
         date=args.date,
         version=args.version,
         fonts=fonts,
         title=args.title,
-        author=args.author,
-        subject="Audyt widocznosci w Google i wyszukiwarkach generatywnych",
+        author=args.author or labels["author"],
+        subject=labels["subject"],
         creator="auditing-seo-geo-ai-search",
+        locale=args.locale,
+        invariant=1,
     )
     cover = CoverPage(
         client=args.client,
         title=args.title,
-        subtitle=args.subtitle,
+        subtitle=args.subtitle or labels["subject"],
         date=args.date,
         version=args.version,
-        confidentiality=args.confidentiality,
+        confidentiality=args.confidentiality or labels["confidentiality"],
         hero=args.hero,
         fonts=fonts,
         styles=styles,
+        locale=args.locale,
     )
     story = [cover, NextPageTemplate("content"), PageBreak()]
-    story.extend(markdown_to_story(markdown, styles, fonts, PAGE_WIDTH - 36 * mm))
+    story.extend(markdown_to_story(markdown, styles, fonts, PAGE_WIDTH - 36 * mm, args.locale))
     document.build(story)
 
 

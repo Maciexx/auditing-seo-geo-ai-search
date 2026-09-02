@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "ecommerce-example",
+  "canonical_domain": "ecommerce.example",
+  "owner_facts": [
+    {
+      "fact_id": "catalog-region",
+      "field": "catalog_region",
+      "value": "PL",
+      "source_id": "merchant-summary",
+      "as_of": "2026-08-31"
+    }
+  ],
+  "metric_series": [
+    {
+      "metric_id": "listed-products",
+      "source_id": "merchant-summary",
+      "metric": "listed products",
+      "unit": "count",
+      "state": "AVAILABLE",
+      "coverage": 1.0,
+      "confidence": 0.8,
+      "points": [
+        {
+          "period_start": "2026-08-31",
+          "period_end": "2026-08-31",
+          "value": 240
+        }
+      ]
+    }
+  ],
+  "cited_examples": [],
+  "sources": [
+    {
+      "source_id": "merchant-summary",
+      "filename": "merchant-summary.example.xlsx",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "byte_count": 256,
+      "platform": "merchant_center",
+      "report_type": "catalog-summary",
+      "date_range": null,
+      "filters": [
+        "country=PL"
+      ],
+      "exported_at": "2026-09-01T08:15:00Z"
+    }
+  ]
+}

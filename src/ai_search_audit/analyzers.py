@@ -626,7 +626,13 @@ def validate_findings_rules(
                 )
 
 
-_ENTITY_TYPE_PRIORITY = {"Hotel": 0, "LocalBusiness": 1, "Organization": 2, "WebSite": 3}
+_ENTITY_TYPE_PRIORITY = {
+    "Hotel": 0,
+    "LocalBusiness": 1,
+    "Organization": 2,
+    "OnlineStore": 3,
+    "WebSite": 4,
+}
 _FACT_KEY_ALIASES = {
     "numberofrooms": "room_count",
     "number_of_rooms": "room_count",
@@ -715,6 +721,31 @@ def _entity_facts(node: dict[str, object]) -> dict[str, list[str]]:
     return facts
 
 
+def _root_page_identity(site: Site, pages: list[Page]) -> str | None:
+    for page in pages:
+        requested = urlsplit(str(page.url))
+        if requested.hostname != site.domain or requested.path not in {"", "/"}:
+            continue
+        root_h1 = next((value.strip() for value in page.h1 if value.strip()), None)
+        if root_h1:
+            return root_h1
+        if page.title and page.title.strip():
+            title = page.title.strip()
+            expected_brand = site.brand or site.domain
+            expected = "".join(
+                character for character in expected_brand.casefold() if character.isalnum()
+            )
+            segments = re.split(r"\s*\|\s*|\s+[-–—]\s+", title)
+            matching = [
+                segment.strip()
+                for segment in segments
+                if "".join(character for character in segment.casefold() if character.isalnum())
+                == expected
+            ]
+            return matching[-1] if matching else title
+    return None
+
+
 def select_canonical_entity(site: Site, pages: list[Page]) -> Entity:
     candidates: list[tuple[int, int, int, dict[str, object], str]] = []
     order = 0
@@ -736,12 +767,8 @@ def select_canonical_entity(site: Site, pages: list[Page]) -> Entity:
                 )
                 order += 1
     if not candidates:
-        page_brand = next(
-            (page.h1[0].strip() for page in pages if page.h1 and page.h1[0].strip()),
-            None,
-        )
         return Entity(
-            brand=page_brand or site.brand or site.domain,
+            brand=_root_page_identity(site, pages) or site.brand or site.domain,
             type="Organization",
             domain=site.domain,
             languages=site.languages,

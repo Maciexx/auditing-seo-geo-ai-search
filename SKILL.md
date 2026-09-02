@@ -38,6 +38,69 @@ The engine writes `audit.json`, `evidence.jsonl`, `implementation-backlog.csv`, 
 evidence and implementation layer. A bounded public crawl does not prove sitewide coverage, and
 the engine report does not replace the broader client edition defined below.
 
+## Local versioned project workflow
+
+Use the project workflow when the audit should remain linked to later owner answers, first-party
+visibility exports, or a validation run. The user-facing commands are:
+
+```text
+$auditing-seo-geo-ai-search https://example.com
+$auditing-seo-geo-ai-search update project:example
+$auditing-seo-geo-ai-search enrich project:example
+$auditing-seo-geo-ai-search validate project:example
+```
+
+A URL alone starts a new project and creates its immutable `public-v1`. Derive a safe project ID,
+confirm the client name and locale, then run `ai-search-audit project create`. All later operations
+require the explicit `project:<id>` reference. Before any update, enrich, or validate operation,
+load the manifest and perform an explicit domain and entity identity check. Stop on a mismatch.
+
+Map the later commands as follows:
+
+| Command | Project operation |
+|---|---|
+| `update project:<id>` | Normalize owner answers and create a context version without crawling again. |
+| `enrich project:<id>` | Normalize approved first-party visibility exports and add visibility evidence. |
+| `validate project:<id>` | Run a fresh like-for-like public audit and compare it with the selected baseline. |
+
+Every successful version must include both `next-audit-data-request_<LOCALE>.md` and
+`next-audit-data-request.json`. Tailor them to what is still missing or useful for that project.
+
+The project operation is not complete client delivery when it has only the engine PDF. After the
+working audit has been edited into the client edition, render it with an explicit locale, audit ID,
+and either a client-controlled hero plus its source or an explicit no-hero reason. Run the complete
+PDF QA from [references/client-pdf-spec.md](references/client-pdf-spec.md), calculate the SHA-256 of
+that exact reviewed PDF, and run `ai-search-audit project finalize`. The command publishes a new
+immutable `reports/<audit-version>/edition-N/` linked to the canonical audit. It rejects the
+technical PDF, stale source, wrong project/version, mismatched locale, unreviewed bytes, or a cover
+choice that does not match the reviewed PDF. Deliver only the PDF path printed by finalization.
+
+Finalization is a projection and publication boundary. It does not create narrative, findings, or
+strategic claims. All client-facing conclusions must already exist in the evidence-reviewed
+Markdown. Never overwrite an engine bundle or describe bundle validation as editorial or visual
+approval.
+
+The initial deliverable is a free public audit. A client can optionally provide exports for an
+optional deeper first-party visibility diagnostic. Keep pricing or sales copy outside the report.
+This workflow measures visibility only. For GA4, accept aggregate GA4 Organic Search and GA4 AI
+Assistant visits and sessions. Do not retain or analyze leads, revenue, CRM records, conversions,
+customer IDs, or user-level events.
+
+Process supplied files export-first. Start the deterministic project command with `--intake-root`
+and keep the coordinating CLI process open. It creates an owned temporary intake directory and
+prints `OWNED_INTAKE_DIR=<path>`. Use the available local document, spreadsheet, PDF, and image
+tools to place the supplied exports there and construct `normalized-intake.json`. Send `READY` on
+the command's standard input only after normalization is complete. The same process then validates
+and consumes its creator-issued capability. Never copy raw attachments into the client project.
+Delete the owned intake directory on success or failure. If a format cannot be normalized reliably,
+fail clearly, delete the intake, and ask the user to reattach the source files and rerun with a fresh
+export.
+
+Default validation to 90 days after the implementation date. Compare equivalent windows and write
+that a change was observed after the work; chronology does not establish causation. During local
+development, the stable public checkout remains untouched. Store private client projects outside
+all code checkouts.
+
 ## Evidence model
 
 Use these labels in working notes and expose them wherever uncertainty affects a finding.
