@@ -4,6 +4,8 @@
 
 ## 0.2.0
 
+- Anchored temporary intake ownership to open directory and marker handles, preventing recycled
+  filesystem identifiers from authorizing replacement directories; retired handles on rejection.
 - Added linked, immutable client report editions with explicit PDF review, cover provenance,
   Polish and English editorial labels, and deterministic source-to-PDF verification.
 - Added a configurable public-release scanner without embedding private client identities.

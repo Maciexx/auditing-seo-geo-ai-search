@@ -17,7 +17,7 @@ import threading
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -654,6 +654,7 @@ class _OwnedDirectory:
     marker_inode: int
     canonical_root: str
     canonical_path: str
+    identity_anchors: tuple[int, ...] = field(default=(), compare=False, repr=False)
 
 
 _CapabilityKey: TypeAlias = tuple[str, str, str, int, int, int, int]
@@ -673,15 +674,89 @@ def _capability_key(owned: _OwnedDirectory) -> _CapabilityKey:
     )
 
 
-def _register_capability(owned: _OwnedDirectory) -> None:
-    key = _capability_key(owned)
-    with _CAPABILITY_LOCK:
-        if key in _OWNED_CAPABILITIES:
-            raise IntakeOwnershipError("owned intake capability identity collided")
-        _OWNED_CAPABILITIES[key] = owned
+def _close_identity_anchors(owned: _OwnedDirectory) -> None:
+    for descriptor in owned.identity_anchors:
+        os.close(descriptor)
+
+
+def _identity_anchors_are_live(owned: _OwnedDirectory) -> bool:
+    if len(owned.identity_anchors) != 2:
+        return False
+    try:
+        directory_fd, marker_fd = owned.identity_anchors
+        directory = os.fstat(directory_fd)
+        marker = os.fstat(marker_fd)
+        return (
+            (directory.st_dev, directory.st_ino) == (owned.directory_device, owned.directory_inode)
+            and (marker.st_dev, marker.st_ino) == (owned.marker_device, owned.marker_inode)
+            and marker.st_nlink == 1
+            and not _held_directory_reports_unlinked(directory_fd, directory)
+        )
+    except OSError:
+        return False
+
+
+def _register_capability(owned: _OwnedDirectory, child_fd: int) -> None:
+    # Keep the actual objects alive: device/inode numbers alone can be recycled
+    # after unlink/rmdir on local filesystems, including Linux ext4.
+    directory_anchor = os.dup(child_fd)
+    try:
+        marker_anchor = os.open(
+            _OWNERSHIP_MARKER,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_anchor,
+        )
+    except BaseException:
+        os.close(directory_anchor)
+        raise
+    held = replace(owned, identity_anchors=(directory_anchor, marker_anchor))
+    try:
+        if not _identity_anchors_are_live(held):
+            raise IntakeOwnershipError(
+                "owned intake capability identity changed before registration"
+            )
+        key = _capability_key(held)
+        with _CAPABILITY_LOCK:
+            if key in _OWNED_CAPABILITIES:
+                raise IntakeOwnershipError("owned intake capability identity collided")
+            _OWNED_CAPABILITIES[key] = held
+    except BaseException:
+        _close_identity_anchors(held)
+        raise
 
 
 def _claim_issued_capability(
+    owned_input_dir: Path,
+    intake_root: Path,
+) -> _OwnedDirectory:
+    try:
+        return _claim_live_capability(owned_input_dir, intake_root)
+    except BaseException:
+        _retire_rejected_capability(owned_input_dir, intake_root)
+        raise
+
+
+def _retire_rejected_capability(owned_input_dir: Path, intake_root: Path) -> None:
+    """Release our handles only; never delete a path whose ownership was rejected."""
+    root, owned = _absolute_path(intake_root), _absolute_path(owned_input_dir)
+    if owned.parent != root or owned == root:
+        return
+    try:
+        canonical_root: str | None = str(root.resolve(strict=False))
+    except (OSError, RuntimeError):
+        canonical_root = None
+    with _CAPABILITY_LOCK:
+        stale = [
+            key
+            for key, capability in _OWNED_CAPABILITIES.items()
+            if (capability.root == root and capability.path == owned)
+            or (capability.canonical_root == canonical_root and capability.path.name == owned.name)
+        ]
+        for key in stale:
+            _close_identity_anchors(_OWNED_CAPABILITIES.pop(key))
+
+
+def _claim_live_capability(
     owned_input_dir: Path,
     intake_root: Path,
 ) -> _OwnedDirectory:
@@ -729,6 +804,7 @@ def _claim_issued_capability(
                 marker_details.st_dev,
                 marker_details.st_ino,
             )
+            and _identity_anchors_are_live(capability)
         ]
         if len(matches) != 1:
             raise IntakeOwnershipError(
@@ -949,7 +1025,7 @@ def create_owned_intake_dir(intake_root: Path, *, now: datetime | None = None) -
                     canonical_root=canonical_root,
                     canonical_path=canonical_path,
                 )
-                _register_capability(capability)
+                _register_capability(capability, child_fd)
                 return owned
             except BaseException:
                 if child_fd >= 0 and child_details is not None:
@@ -1687,7 +1763,20 @@ def consume_intake(
     _require_supported_posix_primitives()
     owned = _claim_issued_capability(owned_input_dir, intake_root)
     try:
-        if _verify_owned_directory(owned_input_dir, intake_root) != owned:
+        return _consume_claimed_intake(owned, normalized, now=now, processor=processor)
+    finally:
+        _close_identity_anchors(owned)
+
+
+def _consume_claimed_intake(
+    owned: _OwnedDirectory,
+    normalized: NormalizedIntake | Mapping[str, object],
+    *,
+    now: datetime | None,
+    processor: IntakeProcessor | None,
+) -> ProcessedIntake:
+    try:
+        if _verify_owned_directory(owned.path, owned.root) != owned:
             raise IntakeOwnershipError(
                 "owned input directory marker does not match its issued capability"
             )
@@ -1729,7 +1818,10 @@ def discard_owned_intake_dir(
     """Retire and delete one unused capability under exclusive local mutation."""
     _require_supported_posix_primitives()
     owned = _claim_issued_capability(owned_input_dir, intake_root)
-    _delete_verified_owned_directory(
-        owned,
-        require_marker_content=False,
-    )
+    try:
+        _delete_verified_owned_directory(
+            owned,
+            require_marker_content=False,
+        )
+    finally:
+        _close_identity_anchors(owned)

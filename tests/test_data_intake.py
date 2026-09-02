@@ -995,6 +995,90 @@ def test_replayed_marker_does_not_authorize_recreated_directory(tmp_path: Path) 
     assert keep.read_text() == "keep"
 
 
+def test_recreated_directory_rejected_even_when_path_stats_replay_inode_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    intake_root = tmp_path / "intake"
+    inbox = create_owned_intake_dir(intake_root)
+    marker = next(inbox.iterdir())
+    old_directory, old_marker = inbox.lstat(), marker.lstat()
+    content = marker.read_bytes()
+    marker.unlink()
+    inbox.rmdir()
+    inbox.mkdir()
+    marker.write_bytes(content)
+    keep = inbox / "keep.txt"
+    keep.write_text("keep")
+    real_lstat = Path.lstat
+
+    def replayed_lstat(path: Path):
+        if path == inbox:
+            return old_directory
+        if path == marker:
+            return old_marker
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", replayed_lstat)
+    intake = normalized_intake((source_declaration("missing.csv", b"example"),))
+    with pytest.raises(IntakeOwnershipError, match="capability"):
+        consume_intake(inbox, intake, intake_root=intake_root)
+    assert keep.read_text() == "keep"
+
+
+@pytest.mark.parametrize("operation", ["consume", "discard", "invalid"])
+def test_issued_inode_anchors_close_after_capability_is_retired(tmp_path: Path, operation: str):
+    import ai_search_audit.data_intake as intake_module
+
+    inbox, normalized = create_source(tmp_path)
+    issued = next(
+        value for value in intake_module._OWNED_CAPABILITIES.values() if value.path == inbox
+    )
+    anchors = issued.identity_anchors
+    assert len(anchors) == 2
+    if operation == "discard":
+        discard_owned_intake_dir(inbox, intake_root=tmp_path / "intake")
+    elif operation == "invalid":
+        with pytest.raises(IntakeValidationError):
+            consume_intake(inbox, {}, intake_root=tmp_path / "intake")
+    else:
+        consume_intake(inbox, normalized, intake_root=tmp_path / "intake")
+    for descriptor in anchors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+@pytest.mark.parametrize("operation", ["consume", "discard"])
+@pytest.mark.parametrize("damage", ["missing-marker", "missing-directory"])
+def test_early_ownership_failure_retires_anchors_without_deleting_unverified_files(
+    tmp_path: Path, operation: str, damage: str
+):
+    import ai_search_audit.data_intake as intake_module
+
+    intake_root = tmp_path / "intake"
+    inbox = create_owned_intake_dir(intake_root)
+    issued = next(
+        value for value in intake_module._OWNED_CAPABILITIES.values() if value.path == inbox
+    )
+    marker = next(inbox.iterdir())
+    marker.unlink()
+    keep = inbox / "keep.txt"
+    if damage == "missing-directory":
+        inbox.rmdir()
+    else:
+        keep.write_text("keep")
+    with pytest.raises(IntakeOwnershipError):
+        if operation == "consume":
+            consume_intake(inbox, {}, intake_root=intake_root)
+        else:
+            discard_owned_intake_dir(inbox, intake_root=intake_root)
+    assert issued not in intake_module._OWNED_CAPABILITIES.values()
+    for descriptor in issued.identity_anchors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+    if damage == "missing-marker":
+        assert keep.read_text() == "keep"
+
+
 def test_consumed_capability_cannot_be_replayed_with_fresh_matching_marker(
     tmp_path: Path,
 ) -> None:
