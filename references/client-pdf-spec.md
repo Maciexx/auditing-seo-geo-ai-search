@@ -118,11 +118,22 @@ python3 scripts/render_client_pdf.py client-report.md client-audit.pdf \
   --title "AI Search & SEO Audit" \
   --subtitle "Google, ChatGPT, Gemini, Perplexity, Bing/Copilot and generative search" \
   --date "DATE" \
-  --version "1.0" \
+  --version "AUDIT_VERSION_ID" \
+  --audit-id "AUDIT_ID" \
+  --locale pl \
   --hero path/to/client-controlled-hero.jpg
 ```
 
-If the workspace provides a bundled Python runtime, use it so `reportlab` and `pypdf` are available. The renderer accepts Markdown tables, headings, paragraphs, block quotes, numbered lists, bullets, links, bold text, and inline code. It replaces Unicode dash characters with ASCII hyphens for PDF reliability.
+Use the installed skill's `.venv/bin/python` for rendering and `.venv/bin/ai-search-audit` for
+finalization, or activate that environment first. A bundled workspace runtime is also suitable if
+the complete audit package and its pinned PDF dependencies are installed there. Use the same
+runtime, font set and renderer for both steps: finalization reproduces the PDF and compares bytes.
+The renderer accepts Markdown tables, headings, paragraphs, block quotes, numbered lists, bullets, links, bold text, and inline code. It replaces Unicode dash characters with ASCII hyphens for PDF reliability.
+
+Choose `--locale pl` or `--locale en`; fixed cover and footer labels follow this choice. Translate
+the title, subtitle and Markdown yourself. For a typographic cover, replace `--hero` with
+`--no-hero-reason "No suitable client-controlled image was available"`. Never silently omit a
+missing image. For a project edition, use the actual audit ID and version from its canonical bundle.
 
 The renderer is a starting system, not permission to skip judgment. Edit the client Markdown when a table is too dense, a page becomes sparse, or a section spills awkwardly.
 
@@ -138,6 +149,36 @@ Do not deliver immediately after export.
 6. Correct every visual defect, regenerate the PDF, and repeat the checks.
 
 The PDF is not complete until the latest render has no visible overlap, clipping, unreadable table text, missing glyphs, raw URLs overflowing cells, accidental blank pages, or unprofessional page breaks.
+
+## Versioned project finalization
+
+Keep the technical audit bundle unchanged. Prepare and review the editorial source and rendered
+PDF outside that bundle. After the latest evidence and visual review, calculate the digest of
+the exact PDF reviewed and publish it:
+
+```bash
+reviewed_pdf_sha256="$(shasum -a 256 client-audit.pdf | awk '{print $1}')"
+ai-search-audit project finalize project:example \
+  --clients-root /absolute/path/to/clients \
+  --version-id public-v1 \
+  --markdown client-report.md \
+  --pdf client-audit.pdf \
+  --hero path/to/client-controlled-hero.jpg \
+  --hero-source https://example.com/official-image \
+  --reviewed-pdf-sha256 "$reviewed_pdf_sha256"
+```
+
+For a typographic cover, replace both hero options with the same `--no-hero-reason` used during
+rendering. The finalizer verifies identity, locale, source and image hashes, the selected canonical
+audit, and deterministic reproduction of the reviewed PDF. It publishes
+`reports/<audit-version>/edition-N/` under the private client project, containing `client-report.pdf`,
+`client-report.md`, the cover image when used, and `delivery.json` with provenance and digests.
+It prints the final PDF path. Later revisions create a new edition; they never overwrite an audit
+version or an earlier delivery.
+
+The digest is an agent attestation that the evidence and visual review happened. Finalization
+does not automatically judge narrative accuracy or page aesthetics and must not be described as
+doing so. A changed Markdown, image, renderer, or PDF requires rendering and reviewing again.
 
 ## Delivery files
 

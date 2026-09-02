@@ -9,6 +9,7 @@ from typing import TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .comparisons import ValidationComparison
 from .models import (
     AIPrompt,
     AuditRun,
@@ -19,6 +20,8 @@ from .models import (
     ScoreResult,
     SitemapState,
 )
+from .owner_context import OwnerContext, derive_report_status
+from .project_models import AuditStage, ReportStatus
 from .report_models import (
     REPORT_SCHEMA_VERSION,
     REPORT_TEMPLATE_VERSION,
@@ -29,15 +32,27 @@ from .report_models import (
     EntityFact,
     EntityFactValue,
     EvidenceAppendixItem,
+    MeasurementLimitation,
+    MeasurementReportSection,
+    OwnerContextReportSection,
+    OwnerFactReportItem,
+    ProjectReportMetadata,
     RendererMetadata,
     ReportFinding,
     ReportLocale,
+    ReportMetricWindow,
     ReportRecommendation,
     ReportScore,
+    ReportSourceProvenance,
+    ReportVisibilityMetric,
+    ReportVisibilityPoint,
+    ValidationComparisonReportSection,
+    report_context_digest,
     validate_report_compatibility,
 )
 from .report_models import ReportCompatibilityError as ReportCompatibilityError
 from .scoring import observed_ai_visibility, validate_score_explainability
+from .visibility_metrics import VisibilitySnapshot
 
 
 class ClaimGuardError(ValueError):
@@ -502,12 +517,168 @@ def _frozen_entity_facts(
     )
 
 
+def _report_source(source: object) -> ReportSourceProvenance:
+    return ReportSourceProvenance.model_validate(source, from_attributes=True)
+
+
+def build_owner_context_report_section(context: OwnerContext) -> OwnerContextReportSection:
+    return OwnerContextReportSection(
+        schema_version=context.schema_version,
+        project_id=context.project_id,
+        canonical_domain=context.canonical_domain,
+        processed_at=context.processed_at,
+        deleted_at=context.deleted_at,
+        facts=tuple(
+            OwnerFactReportItem(
+                fact_id=fact.fact_id,
+                field=fact.field.value,
+                value=fact.value,
+                as_of=fact.as_of,
+                approval_state=fact.approval_state,
+                conflict_ids=fact.conflict_ids,
+                resolved_conflict_ids=fact.resolved_conflict_ids,
+                provenance=_report_source(fact.provenance),
+            )
+            for fact in context.facts
+        ),
+        sources=tuple(_report_source(source) for source in context.sources),
+    )
+
+
+def build_measurement_report_section(snapshot: VisibilitySnapshot) -> MeasurementReportSection:
+    return MeasurementReportSection(
+        schema_version=snapshot.schema_version,
+        project_id=snapshot.project_id,
+        canonical_domain=snapshot.canonical_domain,
+        processed_at=snapshot.processed_at,
+        deleted_at=snapshot.deleted_at,
+        metrics=tuple(
+            ReportVisibilityMetric(
+                metric_id=metric.metric_id,
+                metric=metric.metric,
+                unit=metric.unit,
+                state=metric.state,
+                value=metric.value,
+                coverage=metric.coverage,
+                confidence=metric.confidence,
+                source_ids=metric.source_ids,
+                window=(
+                    None
+                    if metric.window is None
+                    else ReportMetricWindow(
+                        start=metric.window.start,
+                        end=metric.window.end,
+                    )
+                ),
+                segments=metric.segments,
+                definitions=metric.definitions,
+                points=tuple(
+                    ReportVisibilityPoint(
+                        period_start=point.period_start,
+                        period_end=point.period_end,
+                        value=point.value,
+                    )
+                    for point in metric.points
+                ),
+            )
+            for metric in snapshot.metrics
+        ),
+        sources=tuple(_report_source(source) for source in snapshot.sources),
+        limitations=tuple(
+            MeasurementLimitation(metric_id=metric.metric_id, state=metric.state)
+            for metric in snapshot.metrics
+            if metric.state is not DataState.AVAILABLE
+        ),
+    )
+
+
+def _validate_context_identity(
+    *,
+    run: AuditRun,
+    project: ProjectReportMetadata | None,
+    owner_context: OwnerContext | None,
+    visibility_snapshot: VisibilitySnapshot | None,
+) -> None:
+    if (owner_context is not None or visibility_snapshot is not None) and project is None:
+        raise ValueError("project metadata is required for canonical report context")
+    if project is None:
+        return
+    if owner_context is not None and (
+        owner_context.project_id != project.project_id
+        or owner_context.canonical_domain != run.site.domain
+    ):
+        raise ValueError("owner-context project identity does not match the report")
+    if visibility_snapshot is not None and (
+        visibility_snapshot.project_id != project.project_id
+        or visibility_snapshot.canonical_domain != run.site.domain
+    ):
+        raise ValueError("measurement project identity does not match the report")
+
+
+def _validate_trusted_report_status(
+    project: ProjectReportMetadata | None,
+    owner_context: OwnerContext | None,
+) -> None:
+    if project is None:
+        return
+    if project.stage is AuditStage.PUBLIC:
+        expected = ReportStatus.PUBLIC_EVIDENCE_DRAFT
+    elif owner_context is None:
+        expected = ReportStatus.CLIENT_CONTEXT_DRAFT
+    else:
+        expected = derive_report_status(
+            stage=project.stage,
+            used_fact_ids=tuple(fact.fact_id for fact in owner_context.facts),
+            owner_context=owner_context,
+        )
+    if project.report_status is not expected:
+        raise ValueError("project report status does not match trusted report status")
+
+
+def validate_client_report_context(
+    report: ClientReportData,
+    *,
+    project_metadata: ProjectReportMetadata | None,
+    owner_context: OwnerContext | None,
+    visibility_snapshot: VisibilitySnapshot | None,
+    validation_comparison: ValidationComparison | None = None,
+) -> None:
+    _validate_trusted_report_status(project_metadata, owner_context)
+    expected_owner = (
+        None if owner_context is None else build_owner_context_report_section(owner_context)
+    )
+    expected_measurement = (
+        None
+        if visibility_snapshot is None
+        else build_measurement_report_section(visibility_snapshot)
+    )
+    if report.project != project_metadata:
+        raise ValueError("client report project metadata does not match the trusted version")
+    if report.owner_context != expected_owner:
+        raise ValueError("client report owner context does not match the canonical aggregate")
+    if report.measurement != expected_measurement:
+        raise ValueError("client report measurement does not match the canonical aggregate")
+    expected_comparison = (
+        None
+        if validation_comparison is None
+        else ValidationComparisonReportSection.model_validate(
+            validation_comparison.model_dump(mode="python")
+        )
+    )
+    if report.validation_comparison != expected_comparison:
+        raise ValueError("client report validation comparison does not match canonical data")
+
+
 def build_client_report_data(
     run: AuditRun,
     rewrite: RewriteResult,
     manifest: ProtectedClaimsManifest,
     *,
     renderer_metadata: RendererMetadata,
+    project_metadata: ProjectReportMetadata | None = None,
+    owner_context: OwnerContext | None = None,
+    visibility_snapshot: VisibilitySnapshot | None = None,
+    validation_comparison: ValidationComparison | None = None,
 ) -> ClientReportData:
     final_draft = rewrite.draft
     validate_report_compatibility(
@@ -524,11 +695,33 @@ def build_client_report_data(
         final_draft.evidence,
         run.ai_observations,
     )
+    _validate_context_identity(
+        run=run,
+        project=project_metadata,
+        owner_context=owner_context,
+        visibility_snapshot=visibility_snapshot,
+    )
+    _validate_trusted_report_status(project_metadata, owner_context)
 
     prompt_versions = sorted({prompt.pack_version for prompt in final_draft.ai_prompts})
     ai_state = observed_ai_visibility(run.ai_observations).state
     recommendations = _recommendations_from_findings(
         final_draft.findings, final_draft.recommendations
+    )
+    report_owner_context = (
+        None if owner_context is None else build_owner_context_report_section(owner_context)
+    )
+    report_measurement = (
+        None
+        if visibility_snapshot is None
+        else build_measurement_report_section(visibility_snapshot)
+    )
+    report_validation_comparison = (
+        None
+        if validation_comparison is None
+        else ValidationComparisonReportSection.model_validate(
+            validation_comparison.model_dump(mode="python")
+        )
     )
     return ClientReportData(
         report_schema_version=final_draft.report_schema_version,
@@ -576,6 +769,20 @@ def build_client_report_data(
         evidence_appendix=tuple(_evidence_appendix(final_draft.evidence)),
         methodology=tuple(final_draft.methodology),
         limitations=tuple(final_draft.limitations),
+        project=project_metadata,
+        owner_context=report_owner_context,
+        measurement=report_measurement,
+        validation_comparison=report_validation_comparison,
+        context_digest=(
+            None
+            if project_metadata is None
+            else report_context_digest(
+                project_metadata,
+                report_owner_context,
+                report_measurement,
+                report_validation_comparison,
+            )
+        ),
         anti_slop=AntiSlopReportMetadata(
             route=rewrite.route,
             agent_skill_state=rewrite.agent_skill_state,

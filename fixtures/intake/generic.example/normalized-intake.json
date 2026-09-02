@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "generic-example",
+  "canonical_domain": "generic.example",
+  "owner_facts": [
+    {
+      "fact_id": "preferred-brand-name",
+      "field": "preferred_brand_name",
+      "value": "Generic Example",
+      "source_id": "search-performance",
+      "as_of": "2026-08-31"
+    }
+  ],
+  "metric_series": [
+    {
+      "metric_id": "organic-clicks",
+      "source_id": "search-performance",
+      "metric": "clicks",
+      "unit": "count",
+      "state": "AVAILABLE",
+      "coverage": 1.0,
+      "confidence": 0.8,
+      "dimensions": [
+        "country=PL"
+      ],
+      "filters": [
+        "search_type=web"
+      ],
+      "segment_label": "organic search",
+      "points": [
+        {
+          "period_start": "2026-08-01",
+          "period_end": "2026-08-31",
+          "value": 0
+        }
+      ]
+    }
+  ],
+  "cited_examples": [
+    {
+      "example_id": "aggregate-example",
+      "source_id": "search-performance",
+      "description": "Fabricated aggregate search performance example",
+      "citation": "https://generic.example/methodology",
+      "non_sensitive": true
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "search-performance",
+      "filename": "search-performance.example.csv",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "byte_count": 128,
+      "platform": "google_search_console",
+      "report_type": "search-performance",
+      "date_range": {
+        "start": "2026-08-01",
+        "end": "2026-08-31"
+      },
+      "filters": [
+        "search_type=web"
+      ],
+      "exported_at": "2026-09-01T08:00:00Z"
+    }
+  ]
+}

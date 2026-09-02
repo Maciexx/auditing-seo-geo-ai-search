@@ -82,7 +82,7 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
         "ai-prompts.json",
     }
     assert expected == {path.name for path in tmp_path.iterdir()}
-    assert run.audit_engine_version == "0.1.1"
+    assert run.audit_engine_version == "0.2.0"
     assert run.ruleset_version == "2026.08.11"
     assert run.adapter_versions["public-research"] == "0.1.0"
     scores = {score.name: score for score in run.scores}
@@ -97,8 +97,8 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
     assert prompt_pack["version"] == PROMPT_PACK_VERSION
     assert prompt_pack["prompts"]
     report = json.loads((tmp_path / "client-report-data.json").read_text())
-    assert report["report_schema_version"] == "1.0.0"
-    assert report["report_template_version"] == "1.0.0"
+    assert report["report_schema_version"] == "1.2.0"
+    assert report["report_template_version"] == "1.2.0"
     assert report["renderer"]["renderer_version"] == "69.0"
     assert report["evidence_appendix"]
     assert (tmp_path / "client-report.pdf").stat().st_mtime_ns >= (

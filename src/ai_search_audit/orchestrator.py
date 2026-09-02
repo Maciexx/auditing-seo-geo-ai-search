@@ -27,13 +27,15 @@ from .analyzers import (
     select_canonical_entity,
     validate_findings_rules,
 )
+from .comparisons import ValidationComparison
 from .config import AuditConfig
 from .crawler import Resolver
-from .knowledge import KnowledgeRegistry, load_registry
+from .knowledge import KnowledgeRegistry, default_registry_root, load_registry
 from .models import AuditRun, DataState, Finding, ScoreResult, Site, SitemapState
+from .owner_context import OwnerContext
 from .prompts import PROMPT_PACK_VERSION, generate_prompt_pack
 from .renderer import build_renderer_metadata, render_client_report
-from .report_models import ReportLocale
+from .report_models import ProjectReportMetadata, ReportLocale
 from .reports import (
     RewriteProvider,
     apply_anti_slop,
@@ -48,6 +50,7 @@ from .scoring import (
     observed_ai_visibility,
     validate_score_explainability,
 )
+from .visibility_metrics import VisibilitySnapshot
 
 _FINAL_REPORT_ARTIFACTS = ("client-report-data.json", "client-report.pdf")
 
@@ -403,6 +406,105 @@ def _default_scores(
     ]
 
 
+def compile_audit_run(
+    run: AuditRun,
+    *,
+    output_dir: Path | str,
+    report_locale: ReportLocale,
+    rewrite_provider: RewriteProvider | None = None,
+    project_metadata: ProjectReportMetadata | None = None,
+    owner_context: OwnerContext | None = None,
+    visibility_snapshot: VisibilitySnapshot | None = None,
+    validation_comparison: ValidationComparison | None = None,
+) -> AuditRun:
+    """Compile deterministic audit artifacts from an already collected audit run."""
+    output_dir = Path(output_dir)
+    _clear_final_report_artifacts(output_dir)
+    validate_score_explainability(run.scores, run.findings, run.evidence, run.ai_observations)
+    paths = {
+        name: str(output_dir / name)
+        for name in (
+            "audit.json",
+            "evidence.jsonl",
+            "implementation-backlog.csv",
+            "report-draft.json",
+            "client-report-data.json",
+            "client-report.pdf",
+            "ai-prompts.json",
+        )
+    }
+    run.output_paths = paths
+    draft = build_report_draft(run, report_locale=report_locale)
+    _atomic_text(output_dir / "report-draft.json", _json(draft.model_dump(mode="json")))
+    manifest = build_protected_claims_manifest(draft)
+    rewritten = apply_anti_slop(draft, manifest, provider=rewrite_provider)
+    client_report = build_client_report_data(
+        run,
+        rewritten,
+        manifest,
+        renderer_metadata=build_renderer_metadata(),
+        project_metadata=project_metadata,
+        owner_context=owner_context,
+        visibility_snapshot=visibility_snapshot,
+        validation_comparison=validation_comparison,
+    )
+
+    _atomic_text(output_dir / "audit.json", _json(run.model_dump(mode="json")))
+    evidence_lines = "".join(
+        json.dumps(item.model_dump(mode="json"), ensure_ascii=False) + "\n" for item in run.evidence
+    )
+    _atomic_text(output_dir / "evidence.jsonl", evidence_lines)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "priority",
+            "finding_id",
+            "client_title",
+            "implementation",
+            "affected_urls",
+            "evidence_ids",
+        ]
+    )
+    for finding in sorted(rewritten.draft.findings, key=lambda item: item.priority.value):
+        writer.writerow(
+            [
+                finding.priority.value,
+                finding.finding_id,
+                finding.client_title,
+                finding.implementation,
+                " | ".join(finding.affected_urls),
+                " | ".join(finding.evidence_ids),
+            ]
+        )
+    _atomic_text(output_dir / "implementation-backlog.csv", buffer.getvalue())
+    _atomic_text(
+        output_dir / "ai-prompts.json",
+        _json(
+            {
+                "version": PROMPT_PACK_VERSION,
+                "observed_ai_visibility_state": observed_ai_visibility(
+                    run.ai_observations
+                ).state.value,
+                "prompts": [prompt.model_dump(mode="json") for prompt in run.ai_prompts],
+            }
+        ),
+    )
+    with tempfile.TemporaryDirectory(prefix=".report-run.", dir=output_dir) as staging_name:
+        staging = Path(staging_name)
+        staged_data = staging / "client-report-data.json"
+        staged_pdf = staging / "client-report.pdf"
+        _atomic_text(staged_data, _json(client_report.model_dump(mode="json")))
+        render_client_report(client_report, staged_pdf)
+        try:
+            os.replace(staged_pdf, output_dir / "client-report.pdf")
+            os.replace(staged_data, output_dir / "client-report-data.json")
+        except BaseException:
+            _clear_final_report_artifacts(output_dir)
+            raise
+    return run
+
+
 def run_public_audit(
     domain: str,
     *,
@@ -415,6 +517,7 @@ def run_public_audit(
     geo_optimizer_command: str | None = None,
     report_locale: ReportLocale = "en",
     now: datetime | None = None,
+    project_metadata: ProjectReportMetadata | None = None,
 ) -> AuditRun:
     output_dir = Path(output_dir)
     _clear_final_report_artifacts(output_dir)
@@ -424,8 +527,7 @@ def run_public_audit(
         output_dir=output_dir,
         geo_optimizer_command=geo_optimizer_command,
     )
-    registry_root = Path(__file__).resolve().parents[2] / "knowledge"
-    registry = load_registry(registry_root)
+    registry = load_registry(default_registry_root())
     timestamp = now or datetime.now(UTC)
     parsed_domain = httpx.URL(config.domain).host
     site = Site(
@@ -508,82 +610,10 @@ def run_public_audit(
         configuration={"max_pages": max_pages, "target": config.domain},
     )
     run.scores = _default_scores(run, structured.state, research.state, registry, timestamp)
-    validate_score_explainability(run.scores, run.findings, run.evidence, run.ai_observations)
-    paths = {
-        name: str(output_dir / name)
-        for name in (
-            "audit.json",
-            "evidence.jsonl",
-            "implementation-backlog.csv",
-            "report-draft.json",
-            "client-report-data.json",
-            "client-report.pdf",
-            "ai-prompts.json",
-        )
-    }
-    run.output_paths = paths
-    draft = build_report_draft(run, report_locale=report_locale)
-    _atomic_text(output_dir / "report-draft.json", _json(draft.model_dump(mode="json")))
-    manifest = build_protected_claims_manifest(draft)
-    rewritten = apply_anti_slop(draft, manifest, provider=rewrite_provider)
-    client_report = build_client_report_data(
+    return compile_audit_run(
         run,
-        rewritten,
-        manifest,
-        renderer_metadata=build_renderer_metadata(),
+        output_dir=output_dir,
+        report_locale=report_locale,
+        rewrite_provider=rewrite_provider,
+        project_metadata=project_metadata,
     )
-
-    _atomic_text(output_dir / "audit.json", _json(run.model_dump(mode="json")))
-    evidence_lines = "".join(
-        json.dumps(item.model_dump(mode="json"), ensure_ascii=False) + "\n" for item in run.evidence
-    )
-    _atomic_text(output_dir / "evidence.jsonl", evidence_lines)
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(
-        [
-            "priority",
-            "finding_id",
-            "client_title",
-            "implementation",
-            "affected_urls",
-            "evidence_ids",
-        ]
-    )
-    for finding in sorted(rewritten.draft.findings, key=lambda item: item.priority.value):
-        writer.writerow(
-            [
-                finding.priority.value,
-                finding.finding_id,
-                finding.client_title,
-                finding.implementation,
-                " | ".join(finding.affected_urls),
-                " | ".join(finding.evidence_ids),
-            ]
-        )
-    _atomic_text(output_dir / "implementation-backlog.csv", buffer.getvalue())
-    _atomic_text(
-        output_dir / "ai-prompts.json",
-        _json(
-            {
-                "version": PROMPT_PACK_VERSION,
-                "observed_ai_visibility_state": observed_ai_visibility(
-                    run.ai_observations
-                ).state.value,
-                "prompts": [prompt.model_dump(mode="json") for prompt in run.ai_prompts],
-            }
-        ),
-    )
-    with tempfile.TemporaryDirectory(prefix=".report-run.", dir=output_dir) as staging_name:
-        staging = Path(staging_name)
-        staged_data = staging / "client-report-data.json"
-        staged_pdf = staging / "client-report.pdf"
-        _atomic_text(staged_data, _json(client_report.model_dump(mode="json")))
-        render_client_report(client_report, staged_pdf)
-        try:
-            os.replace(staged_pdf, output_dir / "client-report.pdf")
-            os.replace(staged_data, output_dir / "client-report-data.json")
-        except BaseException:
-            _clear_final_report_artifacts(output_dir)
-            raise
-    return run

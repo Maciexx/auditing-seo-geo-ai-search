@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .orchestrator import run_public_audit
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]

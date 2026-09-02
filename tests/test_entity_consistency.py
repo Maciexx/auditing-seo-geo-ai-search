@@ -78,6 +78,76 @@ def test_canonical_entity_prefers_relevant_supported_node_from_graph() -> None:
     assert entity.facts["telephone"] == ["+48123456789"]
 
 
+def test_canonical_entity_uses_official_online_store_not_secondary_login_h1() -> None:
+    site = Site(domain="example.com", base_url="https://example.com", brand="Example")
+    root = Page(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        title="Example products - Example Store",
+        json_ld=[
+            {
+                "@type": "OnlineStore",
+                "name": "Example Store",
+                "url": "https://example.com/",
+            }
+        ],
+    )
+    login = Page(
+        url="https://example.com/account/favourites",
+        final_url="https://example.com/login",
+        status_code=200,
+        title="Sign in - Example Store",
+        h1=["Sign in"],
+    )
+
+    entity = select_canonical_entity(site, [root, login])
+
+    assert entity.brand == "Example Store"
+    assert entity.type == "OnlineStore"
+
+
+def test_canonical_entity_fallback_never_uses_a_secondary_page_h1() -> None:
+    site = Site(domain="example.com", base_url="https://example.com", brand="Example")
+    login = Page(
+        url="https://example.com/account/favourites",
+        final_url="https://example.com/login",
+        status_code=200,
+        title="Sign in - Example",
+        h1=["Sign in"],
+    )
+    root = Page(
+        url="https://example.com/",
+        final_url="https://www.example.com/",
+        status_code=200,
+        title="Example official website",
+    )
+
+    entity = select_canonical_entity(site, [login, root])
+
+    assert entity.brand == "Example official website"
+    assert entity.type == "Organization"
+
+
+def test_canonical_entity_fallback_uses_matching_brand_segment_from_root_title() -> None:
+    site = Site(
+        domain="exampleworks.example",
+        base_url="https://exampleworks.example",
+        brand="Exampleworks",
+    )
+    root = Page(
+        url="https://exampleworks.example/",
+        final_url="https://exampleworks.example/",
+        status_code=200,
+        title=("Custom Software & IT Outsourcing | Example Software Developers | ExampleWorks"),
+    )
+
+    entity = select_canonical_entity(site, [root])
+
+    assert entity.brand == "ExampleWorks"
+    assert entity.type == "Organization"
+
+
 def test_entity_fact_normalization_avoids_format_only_conflicts() -> None:
     mentions = [
         ExternalMention(

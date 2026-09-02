@@ -137,3 +137,27 @@ tr { break-inside: avoid; }
 .version-panel span { display: block; color: var(--muted); font-size: 7pt; text-transform: uppercase; }
 .version-panel strong { display: block; margin-top: 1mm; overflow-wrap: anywhere; }
 .empty-state { color: var(--muted); border: 1px dashed var(--line); padding: 5mm; border-radius: 2mm; }
+.project-context-section h3, .measurement-section h3 { margin-top: 7mm; }
+.project-version-panel { grid-template-columns: repeat(3, 1fr); }
+.context-table, .measurement-table, .source-table { table-layout: fixed; }
+.context-table th:nth-child(1) { width: 17%; }
+.context-table th:nth-child(2) { width: 21%; }
+.context-table th:nth-child(3) { width: 17%; }
+.context-table th:nth-child(4) { width: 25%; }
+.context-table th:nth-child(5) { width: 20%; }
+.measurement-table th:nth-child(1) { width: 27%; }
+.measurement-table th:nth-child(2) { width: 14%; }
+.measurement-table th:nth-child(3) { width: 15%; }
+.measurement-table th:nth-child(4) { width: 20%; }
+.measurement-table th:nth-child(5) { width: 24%; }
+.validation-comparison-section .measurement-table td { line-height: 1.45; }
+.source-table th:nth-child(1) { width: 24%; }
+.source-table th:nth-child(2) { width: 17%; }
+.source-table th:nth-child(3) { width: 18%; }
+.source-table th:nth-child(4) { width: 20%; }
+.source-table th:nth-child(5) { width: 21%; }
+.muted-detail, .metric-detail-row { color: var(--muted); font-size: 7pt; }
+.metric-detail-row td { padding-top: 1mm; overflow-wrap: anywhere; }
+.measurement-limitations { break-inside: avoid; background: var(--wash); padding: 4mm; margin-top: 5mm; border-radius: 2mm; }
+.measurement-limitations h3 { margin-top: 0; }
+.measurement-limitations li { font-size: 8pt; }

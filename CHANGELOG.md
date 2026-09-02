@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+## 0.2.0
+
+- Added linked, immutable client report editions with explicit PDF review, cover provenance,
+  Polish and English editorial labels, and deterministic source-to-PDF verification.
+- Added a configurable public-release scanner without embedding private client identities.
+- Restricted source distributions to public source, documentation and synthetic fixtures, even
+  when VCS ignore rules are unavailable during packaging.
+- Added local, immutable public, context, and validation project versions with tailored data
+  requests and privacy-safe intake processing.
+- Added release-boundary checks for private client data, generated reports, raw intake files,
+  absolute local paths, structured credentials, platform tokens, and wheel contents.
+- Added the versioned Knowledge Registry to the wheel and isolated verification that an installed
+  package can create a complete mocked project audit with localized report resources.
+
 ## 0.1.1
 
 - Added protected `report-draft.json` and immutable, versioned `ClientReportData` compilation.
