@@ -271,8 +271,6 @@ class ProjectStore:
         project_id = self._validate_project_id(project_id)
         stage = AuditStage(stage)
         manifest = self.load(project_id)
-        if stage is AuditStage.PUBLIC:
-            raise ValueError("public stage is only valid for the initial public-v1")
         project_path = self._project_path(project_id)
         version_number = manifest.versions[-1].version_number + 1
         version_id = f"{stage.value}-v{version_number}"
@@ -441,10 +439,6 @@ class ProjectStore:
 
         earlier_audit_ids = {first.audit_id}
         for version in manifest.versions[1:]:
-            if version.stage is AuditStage.PUBLIC:
-                raise ProjectStoreIntegrityError(
-                    "project store integrity error: subsequent history entries must be non-public"
-                )
             if version.source_audit_id not in earlier_audit_ids:
                 raise ProjectStoreIntegrityError(
                     "project store integrity error: source_audit_id for "

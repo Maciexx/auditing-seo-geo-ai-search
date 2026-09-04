@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -102,6 +102,7 @@ _FORBIDDEN_VISIBILITY_METADATA_COMPOUNDS = frozenset(
 
 ScalarFactValue: TypeAlias = str | int | float | bool | None
 IntakeProcessor: TypeAlias = Callable[["NormalizedIntake"], None]
+T = TypeVar("T")
 
 
 class IntakeError(RuntimeError):
@@ -1749,6 +1750,39 @@ def _build_processed_intake(
         cited_examples=normalized.cited_examples,
         sources=provenance,
     )
+
+
+def consume_owned_payload(
+    owned_input_dir: Path,
+    *,
+    intake_root: Path,
+    processor: Callable[[int], T],
+) -> T:
+    """Return a trusted processor's result only after verified input deletion.
+
+    The callback receives a borrowed verified directory descriptor and must not
+    close it. This lifecycle does not sandbox callback side effects; callers must
+    publish results only after this function returns successfully.
+    """
+    _require_supported_posix_primitives()
+    owned = _claim_issued_capability(owned_input_dir, intake_root)
+    try:
+        try:
+            if _verify_owned_directory(owned.path, owned.root) != owned:
+                raise IntakeOwnershipError("owned input identity changed")
+            root_fd, owned_fd = _open_verified_owned_descriptors(owned)
+            try:
+                result = processor(owned_fd)
+            finally:
+                os.close(owned_fd)
+                os.close(root_fd)
+        except BaseException:
+            _delete_verified_owned_directory(owned, require_marker_content=False)
+            raise
+        _delete_verified_owned_directory(owned, require_marker_content=True)
+        return result
+    finally:
+        _close_identity_anchors(owned)
 
 
 def consume_intake(

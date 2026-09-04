@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 import ipaddress
 import json
@@ -9,7 +10,9 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
-from typing import Any
+from email.message import Message
+from html.parser import HTMLParser
+from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
@@ -18,14 +21,122 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, HttpUrl
 
 from .config import AuditConfig
+from .diagnostic_models import MAX_CAPTURE_BYTES, PageCaptureResult, is_html_content_type
 from .knowledge import CrawlerControlType, CrawlerProduct, CrawlerPurpose
-from .models import Evidence, JsonLdParseError, Page, SitemapState
+from .models import DataState, Evidence, JsonLdParseError, Page, SitemapState
 
 Resolver = Callable[[str], Sequence[str]]
 
 
 class UnsafeTargetError(ValueError):
     pass
+
+
+class _UncertainHtmlCharset(ValueError):
+    pass
+
+
+def _http_charsets(content_type: str) -> list[str]:
+    message = Message()
+    message["content-type"] = content_type
+    return [
+        value if isinstance(value, str) else ""
+        for key, value in (message.get_params() or [])
+        if key.casefold() == "charset"
+    ]
+
+
+class _HtmlCharsetDeclarations(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.labels: list[str] = []
+
+    def handle_pi(self, data: str) -> None:
+        if re.match(r"xml\s", data, re.IGNORECASE) and re.search(r"\bencoding\b", data):
+            # XML-declared encodings are outside this bounded HTML decoder.
+            # Do not silently fall back to UTF-8 for an unsupported declaration.
+            self.labels.append("")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "meta":
+            return
+        self.labels.extend(value or "" for name, value in attrs if name == "charset")
+        if any(
+            name == "http-equiv" and (value or "").casefold() == "content-type"
+            for name, value in attrs
+        ):
+            for name, value in attrs:
+                if name == "content":
+                    self.labels.extend(_http_charsets(value or ""))
+
+
+def _decode_capture_html(body: bytes, content_type: str) -> str:
+    """Decode declared text without guessing; ambiguous/unsupported HTML stays unknown."""
+    unknown = "HTML charset is unsupported or invalid; content usability is unknown."
+    invalid = "HTML bytes do not decode strictly; content usability is unknown."
+    # UTF-32 is not a supported HTML encoding; check before its UTF-16-like prefix.
+    if body.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        raise _UncertainHtmlCharset(unknown)
+    bom_encoding = None
+    payload = body
+    for marker, encoding in (
+        (codecs.BOM_UTF8, "utf-8"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"),
+        (codecs.BOM_UTF16_BE, "utf-16-be"),
+    ):
+        if body.startswith(marker):
+            bom_encoding = encoding
+            payload = body[len(marker) :]
+            break
+    try:
+        # Latin-1 is only a byte-preserving view of ASCII markup, never source text.
+        preview = payload.decode(bom_encoding or "latin-1", errors="strict")
+    except UnicodeError as exc:
+        raise _UncertainHtmlCharset(invalid) from exc
+    declarations = _HtmlCharsetDeclarations()
+    declarations.feed(preview)
+    declarations.close()
+    encodings = {bom_encoding} if bom_encoding is not None else set()
+    for label in _http_charsets(content_type) + declarations.labels:
+        label = label.strip(" \t\r\n\f").lower()
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", label):
+            raise _UncertainHtmlCharset(unknown)
+        try:
+            encoding = codecs.lookup(label).name
+        except (LookupError, ValueError) as exc:
+            raise _UncertainHtmlCharset(unknown) from exc
+        try:
+            b"\x00".decode(encoding)  # Nonempty input forces the text-codec safety check.
+        except UnicodeError:
+            pass  # A text codec may need more bytes; the actual body is decoded strictly below.
+        if encoding == "utf-16" and bom_encoding in {"utf-16-le", "utf-16-be"}:
+            encoding = bom_encoding
+        # Accept only this explicit browser-label subset, not Python's forgiving aliases.
+        if label not in {
+            "ascii",
+            "us-ascii",
+            "utf-8",
+            "utf8",
+            "utf-16",
+            "utf-16le",
+            "utf-16be",
+        } and not re.fullmatch(r"(?:cp|windows-)125[0-8]", label):
+            raise _UncertainHtmlCharset(unknown)
+        encodings.add(encoding)
+    if len(encodings) > 1:
+        raise _UncertainHtmlCharset(
+            "HTML charset declarations conflict; content usability is unknown."
+        )
+    encoding = next(iter(encodings), "utf-8")
+    if encoding.startswith("utf-16") and bom_encoding is None:
+        raise _UncertainHtmlCharset(unknown)
+    try:
+        html = payload.decode(encoding, errors="strict")
+    except UnicodeError as exc:
+        raise _UncertainHtmlCharset(invalid) from exc
+    if "\x00" in html:
+        raise _UncertainHtmlCharset(invalid)
+    return html
 
 
 class RobotsPolicy(BaseModel):
@@ -115,7 +226,7 @@ def validate_public_url(url: str, *, resolver: Resolver | None = None) -> None:
     parts = urlsplit(url)
     if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
         raise UnsafeTargetError(f"unsafe target URL: {url}")
-    if parts.username or parts.password:
+    if parts.username is not None or parts.password is not None:
         raise UnsafeTargetError(f"credentials are not allowed in target URL: {url}")
     try:
         _ = parts.port
@@ -263,6 +374,138 @@ class NativeCrawler:
         except (httpx.HTTPError, UnsafeTargetError) as exc:
             warnings.append(f"fetch failed for {url}: {exc}")
             return None
+
+    def capture_page(self, url: str) -> PageCaptureResult:
+        """Collect one fresh public page, bounding each redirect body and final response."""
+        requested_url: str | None = None
+        final_url: str | None = None
+        status_code: int | None = None
+        content_type: str | None = None
+        truncated = False
+        failure = "HTTP collection failed."
+        try:
+            validate_public_url(url, resolver=self.resolver)
+            if not _canonical_scope(self.config.domain, url):
+                raise UnsafeTargetError("initial capture target is outside canonical scope")
+            httpx.URL(url)  # Validate HTTP syntax before retaining requested-URL metadata.
+            requested_url = url
+            current = _normalized_url(url)
+            limit = min(self.config.max_response_bytes, MAX_CAPTURE_BYTES)
+            # Follow explicitly so httpx cannot consume an unbounded redirect body.
+            # Both existing security hooks still run on every HTTP exchange.
+            with httpx.Client(
+                transport=self.transport,
+                headers={"user-agent": self.config.user_agent},
+                timeout=self.config.timeout_seconds,
+                follow_redirects=False,
+                max_redirects=self.config.max_redirects,
+                event_hooks={
+                    "request": [self._validate_request],
+                    "response": [self._validate_redirect],
+                },
+            ) as client:
+                for redirect_count in range(self.config.max_redirects + 1):
+                    with client.stream("GET", current) as response:
+                        candidate = _normalized_url(str(response.url))
+                        if not _canonical_scope(self.config.domain, candidate):
+                            raise UnsafeTargetError(
+                                "final capture target is outside canonical scope"
+                            )
+                        final_url = candidate
+                        status_code = response.status_code
+                        content_type = response.headers.get("content-type")
+                        body = bytearray()
+                        for chunk in response.iter_bytes():
+                            if len(body) + len(chunk) > limit:
+                                truncated = True
+                                failure = (
+                                    "Response exceeded capture size limit; "
+                                    "no partial body retained."
+                                )
+                                raise ValueError(failure)
+                            body.extend(chunk)
+                        if response.is_redirect and response.headers.get("location"):
+                            if redirect_count >= self.config.max_redirects:
+                                failure = "HTTP collection exceeded configured redirect limit."
+                                raise ValueError(failure)
+                            current = _normalized_url(
+                                urljoin(candidate, response.headers["location"])
+                            )
+                            continue
+                        html = None
+                        decoding_limitation = None
+                        if is_html_content_type(content_type):
+                            try:
+                                assert content_type is not None
+                                html = _decode_capture_html(bytes(body), content_type)
+                            except _UncertainHtmlCharset as exc:
+                                decoding_limitation = str(exc)
+                            except LookupError as exc:
+                                failure = "HTML decoding failed: unsupported text charset."
+                                raise ValueError(failure) from exc
+                            if html is not None and len(html.encode()) > MAX_CAPTURE_BYTES:
+                                truncated = True
+                                failure = (
+                                    "Decoded HTML exceeded capture size limit; "
+                                    "no partial body retained."
+                                )
+                                raise ValueError(failure)
+                        state: Literal[DataState.AVAILABLE, DataState.UNKNOWN, DataState.FAILED] = (
+                            DataState.AVAILABLE if response.is_success else DataState.UNKNOWN
+                        )
+                        limitations: tuple[str, ...] = (
+                            ()
+                            if response.is_success
+                            else (f"HTTP {status_code} is not successful content evidence.",)
+                        )
+                        if html is None:
+                            state = DataState.UNKNOWN
+                            limitations += (
+                                decoding_limitation
+                                or (
+                                    "Missing or unsupported content type; "
+                                    "HTML usability is unknown."
+                                ),
+                            )
+                        if response.headers.get("cf-mitigated", "").casefold() == "challenge":
+                            state = DataState.UNKNOWN
+                            limitations += ("HTTP response identifies a challenge page.",)
+                        return PageCaptureResult(
+                            url=requested_url,
+                            final_url=final_url,
+                            observed_at=datetime.now(UTC),
+                            collector=f"native-crawler/{self.version}",
+                            status_code=status_code,
+                            content_type=content_type,
+                            body=bytes(body),
+                            html=html,
+                            complete=True,
+                            truncated=False,
+                            state=state,
+                            limitations=limitations,
+                        )
+        except UnsafeTargetError:
+            failure = "Public-target safety check failed; capture was not collected."
+        except httpx.InvalidURL:
+            failure = "Invalid HTTP target URL; capture was not collected."
+        except httpx.HTTPError as exc:
+            failure = f"HTTP collection failed: {type(exc).__name__}."
+        except ValueError:
+            # Do not echo arbitrary input URLs, credentials or server error details.
+            pass
+        return PageCaptureResult(
+            url=requested_url,
+            final_url=final_url,
+            observed_at=datetime.now(UTC),
+            collector=f"native-crawler/{self.version}",
+            status_code=status_code,
+            content_type=content_type,
+            html=None,
+            complete=False,
+            truncated=truncated,
+            state=DataState.FAILED,
+            limitations=(failure,),
+        )
 
     def crawl(self) -> CrawlResult:
         base = _normalized_url(self.config.domain)

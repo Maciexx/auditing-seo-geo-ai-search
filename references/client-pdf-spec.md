@@ -180,6 +180,31 @@ The digest is an agent attestation that the evidence and visual review happened.
 does not automatically judge narrative accuracy or page aesthetics and must not be described as
 doing so. A changed Markdown, image, renderer, or PDF requires rendering and reviewing again.
 
+### Supplementary diagnostic evidence
+
+Read [content diagnostics](content-diagnostics.md) before collecting or importing these samples.
+Keep raw/rendered differences, source-bound passage assessments and dated AI observations in
+the existing technical, content and AI benchmark sections. Include only material reviewed
+quotes with their page source, actual collection date and conditions. Keep the detailed section
+tables in the working evidence. Do not add a mandatory chapter, a new score or a redesigned cover.
+
+Distinguish an observed difference from its inferred possible impact. A source-matched quotation
+does not verify the assessment's meaning or predict citation. Missing browser access or responses
+stay unavailable; an unknown model prevents a controlled numerical delta. Preserve the original
+audit date separately from supplementary collection dates.
+
+To bind the reviewed edition to one immutable run, add this option to the finalization command:
+
+```text
+--diagnostic-run public-v1/run-1
+```
+
+Use the exact source version and run number printed by `project diagnose`, never an implicit
+latest run. Finalization checks the selected run's project, audit source, locale and hashes and
+records its manifest/content digests in `delivery.json`. It does not write new narrative or
+upgrade the canonical audit status. Editions without diagnostic evidence remain valid without
+the option. Perform the full page-by-page QA above after the latest editorial change.
+
 ## Delivery files
 
 Unless the user requests a different format, deliver:

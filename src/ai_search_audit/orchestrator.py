@@ -27,15 +27,24 @@ from .analyzers import (
     select_canonical_entity,
     validate_findings_rules,
 )
+from .artifact_policy import saved_prompt_version
 from .comparisons import ValidationComparison
 from .config import AuditConfig
 from .crawler import Resolver
 from .knowledge import KnowledgeRegistry, default_registry_root, load_registry
 from .models import AuditRun, DataState, Finding, ScoreResult, Site, SitemapState
 from .owner_context import OwnerContext
-from .prompts import PROMPT_PACK_VERSION, generate_prompt_pack
+from .prompt_context import PromptTopic, extract_prompt_topics, resolve_selected_prompt_topics
+from .prompts import (
+    PROMPT_CONTEXT_POLICY_VERSION,
+    PROMPT_PACK_VERSION,
+    SELECTED_PROMPT_CONTEXT_POLICY_VERSION,
+    SELECTED_PROMPT_PACK_VERSION,
+    generate_prompt_pack,
+    prompt_scope_warnings,
+)
 from .renderer import build_renderer_metadata, render_client_report
-from .report_models import ProjectReportMetadata, ReportLocale
+from .report_models import ProjectReportMetadata, ReportLocale, SupplementaryDiagnosticComparison
 from .reports import (
     RewriteProvider,
     apply_anti_slop,
@@ -416,6 +425,7 @@ def compile_audit_run(
     owner_context: OwnerContext | None = None,
     visibility_snapshot: VisibilitySnapshot | None = None,
     validation_comparison: ValidationComparison | None = None,
+    supplementary_diagnostic_comparison: SupplementaryDiagnosticComparison | None = None,
 ) -> AuditRun:
     """Compile deterministic audit artifacts from an already collected audit run."""
     output_dir = Path(output_dir)
@@ -447,6 +457,7 @@ def compile_audit_run(
         owner_context=owner_context,
         visibility_snapshot=visibility_snapshot,
         validation_comparison=validation_comparison,
+        supplementary_diagnostic_comparison=supplementary_diagnostic_comparison,
     )
 
     _atomic_text(output_dir / "audit.json", _json(run.model_dump(mode="json")))
@@ -482,7 +493,7 @@ def compile_audit_run(
         output_dir / "ai-prompts.json",
         _json(
             {
-                "version": PROMPT_PACK_VERSION,
+                "version": saved_prompt_version(run),
                 "observed_ai_visibility_state": observed_ai_visibility(
                     run.ai_observations
                 ).state.value,
@@ -518,6 +529,7 @@ def run_public_audit(
     report_locale: ReportLocale = "en",
     now: datetime | None = None,
     project_metadata: ProjectReportMetadata | None = None,
+    selected_topics: tuple[PromptTopic, ...] | None = None,
 ) -> AuditRun:
     output_dir = Path(output_dir)
     _clear_final_report_artifacts(output_dir)
@@ -572,16 +584,15 @@ def run_public_audit(
     )
     findings.extend(entity_findings)
     validate_findings_rules(findings, registry, as_of=timestamp.date())
-    content_themes = []
-    for page in crawl.pages:
-        content_themes.extend([*page.h1, *page.h2])
-    prompts = generate_prompt_pack(
-        site,
-        entity_type=entity.type,
-        category=entity.type,
-        location=entity.location,
-        content_themes=content_themes[:8],
-    )
+    topics = extract_prompt_topics(site.domain, crawl.pages)
+    version = PROMPT_PACK_VERSION
+    policy = PROMPT_CONTEXT_POLICY_VERSION
+    if selected_topics is not None:
+        selected_topics = resolve_selected_prompt_topics(site.domain, crawl.pages, selected_topics)
+        topics += selected_topics
+        version = SELECTED_PROMPT_PACK_VERSION
+        policy = SELECTED_PROMPT_CONTEXT_POLICY_VERSION
+    prompts = generate_prompt_pack(site, topics=topics, pack_version=version, pages=crawl.pages)
     audit_id = (
         "audit-"
         + hashlib.sha256(f"{parsed_domain}:{timestamp.isoformat()}".encode()).hexdigest()[:16]
@@ -606,8 +617,30 @@ def run_public_audit(
         external_mentions=research.external_mentions,
         entity_consistency_matrix=entity_matrix,
         scores=[],
-        warnings=[*crawl.warnings, *structured.warnings, *research.warnings, *geo.warnings],
-        configuration={"max_pages": max_pages, "target": config.domain},
+        warnings=[
+            *crawl.warnings,
+            *structured.warnings,
+            *research.warnings,
+            *geo.warnings,
+            *prompt_scope_warnings(prompts, report_locale),
+        ],
+        configuration={
+            "max_pages": max_pages,
+            "target": config.domain,
+            "entity_classification_policy": "2.0.0",
+            "prompt_pack_version": version,
+            "prompt_context_policy": policy,
+            "prompt_context": [topic.model_dump(mode="json") for topic in topics],
+            **(
+                {
+                    "prompt_topic_selection": [
+                        topic.model_dump(mode="json") for topic in selected_topics
+                    ]
+                }
+                if selected_topics is not None
+                else {}
+            ),
+        },
     )
     run.scores = _default_scores(run, structured.state, research.state, registry, timestamp)
     return compile_audit_run(

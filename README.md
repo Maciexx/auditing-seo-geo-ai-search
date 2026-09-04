@@ -14,6 +14,8 @@ Turn a public website into an evidence-led SEO, GEO, AEO, and AI Search audit wi
 - Compares structured data, entity signals, and the site's public truth.
 - Records independent listings, reviews, press, and directory evidence.
 - Builds AI prompt families and records observed visibility when observation is available.
+- Compares raw and rendered content samples, reviews source-linked answer passages, and keeps
+  repeatable AI observations separate from readiness scores.
 - Produces a P0/P1/P2 roadmap, a measurement plan, and questions for owners.
 
 ## How it works
@@ -73,6 +75,12 @@ edition, renders it in the shared editorial design with a client-controlled cove
 explained typographic cover), and checks every page. `project finalize` saves the reviewed PDF in
 `reports/<audit-version>/edition-N/` under that client's private project. Each edition stays linked
 to its audit; earlier reports are not overwritten. See the [PDF workflow](references/client-pdf-spec.md).
+
+After the public audit, supplementary diagnostics can add a few reviewed examples to that same
+client PDF. The agent uses an available browser and accessible AI products, records missing
+access honestly, and saves immutable runs without changing the audit. Different models or
+unknown settings do not produce a controlled numerical comparison. No additional account,
+browser package or paid API is required. See the [collection guide](references/content-diagnostics.md).
 
 ## Output
 

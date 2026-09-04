@@ -132,6 +132,175 @@ def create_source(
     return inbox, normalized_intake((declaration,))
 
 
+def test_failed_diagnostic_processor_removes_owned_inputs(tmp_path: Path) -> None:
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    (owned / "source.txt").write_text("synthetic public input")
+
+    def reject(directory_fd: int) -> None:
+        assert os.path.isdir(directory_fd)
+        raise ValueError("invalid diagnostic")
+
+    with pytest.raises(ValueError, match="invalid diagnostic"):
+        data_intake.consume_owned_payload(owned, intake_root=root, processor=reject)
+    assert not owned.exists()
+
+
+def test_owned_payload_returns_processor_result_only_after_cleanup(tmp_path: Path) -> None:
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    sibling = root / "sibling"
+    sibling.mkdir()
+    (sibling / "keep.txt").write_text("keep")
+    (owned / "source.txt").write_text("synthetic public input")
+    descriptors = []
+    result = object()
+
+    def process(directory_fd: int) -> object:
+        descriptors.append(directory_fd)
+        assert owned.exists()
+        assert "source.txt" in os.listdir(directory_fd)
+        return result
+
+    assert data_intake.consume_owned_payload(owned, intake_root=root, processor=process) is result
+    assert not owned.exists()
+    assert (sibling / "keep.txt").read_text() == "keep"
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+@pytest.mark.parametrize("error", [ValueError, KeyboardInterrupt])
+def test_owned_payload_failure_closes_descriptors_and_identity_anchors(tmp_path, error):
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    issued = next(
+        value for value in data_intake._OWNED_CAPABILITIES.values() if value.path == owned
+    )
+    descriptors = list(issued.identity_anchors)
+
+    def process(directory_fd):
+        descriptors.append(directory_fd)
+        raise error("processor failed")
+
+    with pytest.raises(error, match="processor failed"):
+        data_intake.consume_owned_payload(owned, intake_root=root, processor=process)
+    assert not owned.exists()
+    assert issued not in data_intake._OWNED_CAPABILITIES.values()
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_owned_payload_failed_cleanup_prevents_return_and_post_consume_publication(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    called = []
+    published = []
+
+    def process(directory_fd):
+        called.append(directory_fd)
+        return "validated-result"
+
+    def fail_cleanup(*args):
+        raise OSError("injected deletion failure")
+
+    monkeypatch.setattr(data_intake, "_delete_quarantined_directory", fail_cleanup)
+    with pytest.raises(IntakeCleanupError):
+        result = data_intake.consume_owned_payload(owned, intake_root=root, processor=process)
+        published.append(result)
+    assert len(called) == 1
+    assert published == []
+    with pytest.raises(IntakeOwnershipError):
+        data_intake.consume_owned_payload(owned, intake_root=root, processor=process)
+    assert len(called) == 1
+
+
+@pytest.mark.parametrize("target_name", ["intake", "sibling"])
+def test_owned_payload_never_claims_root_or_sibling(tmp_path, target_name):
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    sibling = tmp_path / "sibling"
+    sibling.mkdir()
+    (sibling / "keep.txt").write_text("keep")
+
+    def forbidden(directory_fd):
+        pytest.fail("unowned target must not reach processor")
+
+    with pytest.raises(IntakeOwnershipError):
+        data_intake.consume_owned_payload(
+            tmp_path / target_name, intake_root=root, processor=forbidden
+        )
+    assert (sibling / "keep.txt").read_text() == "keep"
+    assert owned.exists()
+    discard_owned_intake_dir(owned, intake_root=root)
+
+
+def test_owned_payload_root_replacement_cannot_return_success_or_delete_replacement(tmp_path):
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    moved_root = tmp_path / "original-intake"
+    published = []
+
+    def replace_root(directory_fd):
+        root.rename(moved_root)
+        root.mkdir()
+        (root / "keep.txt").write_text("keep")
+        return "validated-result"
+
+    with pytest.raises(IntakeCleanupError, match="root identity"):
+        published.append(
+            data_intake.consume_owned_payload(owned, intake_root=root, processor=replace_root)
+        )
+    assert published == []
+    assert (root / "keep.txt").read_text() == "keep"
+    assert (moved_root / owned.name).is_dir()
+
+
+def test_owned_payload_sibling_replacement_at_quarantine_is_preserved(tmp_path, monkeypatch):
+    root = tmp_path / "intake"
+    owned = create_owned_intake_dir(root)
+    saved = root / "saved-owned"
+    sibling = root / "sibling"
+    sibling.mkdir()
+    (sibling / "keep.txt").write_text("keep")
+    actual_rename = data_intake._rename_to_quarantine
+    published = []
+
+    def substitute(root_fd, owned_name, quarantine_fd):
+        owned.rename(saved)
+        sibling.rename(owned)
+        actual_rename(root_fd, owned_name, quarantine_fd)
+
+    monkeypatch.setattr(data_intake, "_rename_to_quarantine", substitute)
+    with pytest.raises(IntakeCleanupError, match="identity"):
+        published.append(
+            data_intake.consume_owned_payload(
+                owned, intake_root=root, processor=lambda fd: "result"
+            )
+        )
+    assert published == []
+    assert (owned / "keep.txt").read_text() == "keep"
+    assert saved.is_dir()
+
+
+def test_diagnostic_fields_do_not_widen_legacy_intake_contracts():
+    for field in (
+        "rendered_captures",
+        "expected_binding",
+        "worksheet",
+        "responses",
+        "baseline_run",
+    ):
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            normalized_intake((), **{field: {}})
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            processed_intake(**{field: {}})
+    assert "diagnostic" not in {source.value for source in VisibilitySource}
+
+
 @pytest.mark.parametrize("suffix", (".csv", ".xlsx", ".json", ".pdf", ".png", ".jpg", ".jpeg"))
 def test_source_declaration_accepts_declared_source_suffixes(suffix: str) -> None:
     declaration = source_declaration(f"report{suffix.upper()}", b"example")
@@ -995,8 +1164,9 @@ def test_replayed_marker_does_not_authorize_recreated_directory(tmp_path: Path) 
     assert keep.read_text() == "keep"
 
 
+@pytest.mark.parametrize("consumer", ["legacy", "payload"])
 def test_recreated_directory_rejected_even_when_path_stats_replay_inode_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, consumer: str
 ) -> None:
     intake_root = tmp_path / "intake"
     inbox = create_owned_intake_dir(intake_root)
@@ -1021,7 +1191,12 @@ def test_recreated_directory_rejected_even_when_path_stats_replay_inode_identity
     monkeypatch.setattr(Path, "lstat", replayed_lstat)
     intake = normalized_intake((source_declaration("missing.csv", b"example"),))
     with pytest.raises(IntakeOwnershipError, match="capability"):
-        consume_intake(inbox, intake, intake_root=intake_root)
+        if consumer == "legacy":
+            consume_intake(inbox, intake, intake_root=intake_root)
+        else:
+            data_intake.consume_owned_payload(
+                inbox, intake_root=intake_root, processor=lambda fd: None
+            )
     assert keep.read_text() == "keep"
 
 
@@ -1079,15 +1254,20 @@ def test_early_ownership_failure_retires_anchors_without_deleting_unverified_fil
         assert keep.read_text() == "keep"
 
 
+@pytest.mark.parametrize("consumer", ["legacy", "payload"])
 def test_consumed_capability_cannot_be_replayed_with_fresh_matching_marker(
     tmp_path: Path,
+    consumer: str,
 ) -> None:
     intake_root = tmp_path / "intake"
     inbox, intake = create_source(tmp_path)
     run_id = inbox.name
     nonce = run_id.rsplit("-", 1)[-1]
 
-    consume_intake(inbox, intake, intake_root=intake_root)
+    if consumer == "legacy":
+        consume_intake(inbox, intake, intake_root=intake_root)
+    else:
+        data_intake.consume_owned_payload(inbox, intake_root=intake_root, processor=lambda fd: None)
 
     inbox.mkdir()
     write_forged_marker(inbox, nonce=nonce)
@@ -1095,11 +1275,16 @@ def test_consumed_capability_cannot_be_replayed_with_fresh_matching_marker(
     keep.write_text("keep")
 
     with pytest.raises(IntakeOwnershipError, match="capability"):
-        consume_intake(
-            inbox,
-            normalized_intake((source_declaration("missing.csv", b"example"),)),
-            intake_root=intake_root,
-        )
+        if consumer == "legacy":
+            consume_intake(
+                inbox,
+                normalized_intake((source_declaration("missing.csv", b"example"),)),
+                intake_root=intake_root,
+            )
+        else:
+            data_intake.consume_owned_payload(
+                inbox, intake_root=intake_root, processor=lambda fd: None
+            )
 
     assert keep.read_text() == "keep"
 

@@ -51,7 +51,14 @@ def test_synthetic_hotel_golden_audit_is_evidence_rich(tmp_path: Path) -> None:
     assert set(conflict.factual_claims[0].numbers) == set(expected["required_conflict_values"])
     assert len(conflict.evidence_ids) == 2
     assert conflict.rule_state and conflict.rule_state.value == "CURRENT"
-    assert run.entity and run.entity.brand == "Example Lakeside Hotel"
+    root_page = next(page for page in run.pages if str(page.url) == f"https://{site['domain']}/")
+    assert root_page.title == site["brand"]
+    assert root_page.h1 == [site["brand"]]
+    # URL-only audits retain the domain fallback: unbound prose and malformed
+    # JSON-LD do not establish the fixture's display name as canonical identity.
+    assert run.entity and run.entity.brand == expected["canonical_fallback_brand"]
+    assert run.entity.brand != site["brand"]
+    assert run.site.brand == run.entity.brand
     assert run.entity and run.entity.facts["positioning"] == ["boutique"]
     assert run.entity.facts["seasonality"] == ["seasonal demand"]
     assert run.entity.facts["differentiator"] == ["guided nature stays"]
@@ -59,6 +66,7 @@ def test_synthetic_hotel_golden_audit_is_evidence_rich(tmp_path: Path) -> None:
     assert all(page.json_ld_errors for page in run.pages)
     assert len(run.ai_prompts) >= expected["minimum_prompt_count"]
     assert all(prompt.pack_version == expected["prompt_pack_version"] for prompt in run.ai_prompts)
+    assert all(prompt.target_entities == [run.entity.brand] for prompt in run.ai_prompts)
     scores = {score.name: score for score in run.scores}
     assert expected["forbidden_score"] not in scores
     assert scores["Technical Search Readiness"].total_checks >= expected["minimum_technical_checks"]

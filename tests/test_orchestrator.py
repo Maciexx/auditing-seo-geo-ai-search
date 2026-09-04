@@ -7,6 +7,7 @@ import pytest
 
 from ai_search_audit import orchestrator
 from ai_search_audit.adapters import PublicResearchItem
+from ai_search_audit.knowledge import default_registry_root, load_registry
 from ai_search_audit.models import DataState
 from ai_search_audit.orchestrator import run_public_audit
 from ai_search_audit.prompts import PROMPT_PACK_VERSION
@@ -82,8 +83,9 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
         "ai-prompts.json",
     }
     assert expected == {path.name for path in tmp_path.iterdir()}
-    assert run.audit_engine_version == "0.2.0"
-    assert run.ruleset_version == "2026.08.11"
+    assert run.audit_engine_version == "0.3.0"
+    assert run.configuration["entity_classification_policy"] == "2.0.0"
+    assert run.ruleset_version == load_registry(default_registry_root()).version
     assert run.adapter_versions["public-research"] == "0.1.0"
     scores = {score.name: score for score in run.scores}
     assert scores["Measurement Maturity"].state is DataState.UNAVAILABLE

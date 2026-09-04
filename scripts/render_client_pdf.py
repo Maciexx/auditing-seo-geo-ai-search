@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import html
 import json
@@ -12,6 +14,7 @@ import re
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, TextStringObject
@@ -169,6 +172,101 @@ def inline_markup(value: str, fonts: dict[str, str]) -> str:
     for index, token in enumerate(tokens):
         value = value.replace(f"@@TOKEN{index}@@", token)
     return value
+
+
+def literal_inline_text(text: str) -> str:
+    """Only paired typographic emphasis/code, never links, tags, tokens or layout."""
+    pattern = re.compile(
+        r"(?<![\w`\\])`([^`\n]+)(?<!\\)`(?![\w`])"
+        r"|(?<![\w*\\])\*\*(?=\S)([^*\n]+?)(?<=\S)(?<!\\)\*\*(?![\w*])"
+    )
+    chunks = []
+    position = 0
+    for match in pattern.finditer(text):
+        chunks.append(html.escape(text[position : match.start()]))
+        if match.group(1) is not None:
+            chunks.append('<font name="Courier">' + html.escape(match.group(1)) + "</font>")
+        else:
+            chunks.append("<b>" + html.escape(match.group(2)) + "</b>")
+        position = match.end()
+    chunks.append(html.escape(text[position:]))
+    return "".join(chunks)
+
+
+def literal_paragraph_markup(line: str) -> str:
+    """Decode opt-in bounded evidence text only at the terminal text stage.
+
+    No decoded character passes through general Markdown, layout or token substitution.
+    Citation offsets refer to untouched Unicode text, including overlaps.
+    """
+    match = re.fullmatch(r"<!-- audit-literal-v1:([A-Za-z0-9+/=]{1,65536}) -->", line)
+    try:
+        if match is None:
+            raise ValueError
+        raw = base64.b64decode(match.group(1), validate=True)
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict) or set(data) != {"text", "urls", "citations"}:
+            raise ValueError
+        text, urls, citations = data["text"], data["urls"], data["citations"]
+        if not isinstance(text, str) or not 1 <= len(text) <= 600:
+            raise ValueError
+        if not isinstance(urls, list) or len(urls) > 5:
+            raise ValueError
+        for url in urls:
+            if (
+                not isinstance(url, str)
+                or len(url) > 2083
+                or "\\" in url
+                or any(c.isspace() or ord(c) < 32 for c in url)
+            ):
+                raise ValueError
+            parts = urlsplit(url)
+            if parts.scheme not in {"http", "https"} or not parts.hostname:
+                raise ValueError
+            if parts.username is not None or parts.password is not None:
+                raise ValueError
+            _ = parts.port
+        if len(set(urls)) != len(urls):
+            raise ValueError
+        if not isinstance(citations, list) or len(citations) > 200:
+            raise ValueError
+        for citation in citations:
+            if (
+                not isinstance(citation, list)
+                or len(citation) != 3
+                or any(type(v) is not int for v in citation)
+                or not 0 <= citation[0] < citation[1] <= len(text)
+                or not 0 <= citation[2] < len(urls)
+            ):
+                raise ValueError
+        if citations != sorted(citations, key=lambda c: (c[1], c[0], c[2])) or {
+            c[2] for c in citations
+        } != set(range(len(urls))):
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError, binascii.Error) as exc:
+        raise ValueError("invalid observation literal paragraph") from exc
+    chunks = ['"']
+    position = 0
+    for index, (start, end, source) in enumerate(citations):
+        span = text[start:end]
+        if span.startswith("(["):  # Conventional parenthesized provider citation.
+            span = span[1:-1] if span.endswith("))") else span
+        link = re.fullmatch(r"\[([^]\n]+)]\((https?://\S+)\)", span)
+        overlaps = any(
+            other != index and s < end and start < e for other, (s, e, _) in enumerate(citations)
+        )
+        if start >= position and not overlaps and link and link.group(2) == urls[source]:
+            chunks.append(literal_inline_text(text[position:start]))
+            label = html.escape(link.group(1))
+        else:
+            chunks.append(literal_inline_text(text[position:end]))
+            label = f" [{source + 1}]"
+        chunks.append(
+            f'<link href="{html.escape(urls[source], quote=True)}" color="#2A5B4E">{label}</link>'
+        )
+        position = end
+    chunks.extend([literal_inline_text(text[position:]), '"'])
+    return "".join(chunks)
 
 
 def make_styles(fonts: dict[str, str]) -> dict[str, ParagraphStyle]:
@@ -562,8 +660,15 @@ def markdown_to_story(
     fonts: dict[str, str],
     content_width: float,
     locale: str = "pl",
+    observation_projection_version: str = "1.0.0",
 ):
-    lines = sanitize_text(markdown).splitlines()
+    raw_lines = markdown.splitlines()
+    marker_lines = {
+        index
+        for index, line in enumerate(raw_lines)
+        if re.fullmatch(r"<!-- audit-measurement:[0-9a-f]{64} -->", line)
+    }
+    lines = [sanitize_text(line) for line in raw_lines]
     story = []
     index = 0
     section_index = 0
@@ -572,13 +677,19 @@ def markdown_to_story(
     while index < len(lines):
         line = lines[index].rstrip()
         stripped = line.strip()
-        if not stripped:
+        if not stripped or index in marker_lines:
             index += 1
             continue
         if stripped.startswith("# "):
             index += 1
             continue
         if first_section and not stripped.startswith("## "):
+            index += 1
+            continue
+        if observation_projection_version == "1.1.0" and stripped.startswith(
+            "<!-- audit-literal-v1:"
+        ):
+            story.append(Paragraph(literal_paragraph_markup(stripped), styles["body"]))
             index += 1
             continue
         if stripped.startswith("## "):
@@ -675,6 +786,11 @@ def markdown_to_story(
                 break
             if (
                 candidate.startswith(("#", ">", "|"))
+                or (
+                    observation_projection_version == "1.1.0"
+                    and candidate.startswith("<!-- audit-literal-v1:")
+                )
+                or index in marker_lines
                 or re.match(r"^[-*] ", candidate)
                 or re.match(r"^\d+\. ", candidate)
             ):
@@ -713,6 +829,9 @@ def parse_args() -> argparse.Namespace:
     cover.add_argument("--no-hero-reason")
     parser.add_argument("--author")
     parser.add_argument("--confidentiality")
+    parser.add_argument(
+        "--observation-projection-version", choices=("1.0.0", "1.1.0"), default="1.0.0"
+    )
     return parser.parse_args()
 
 
@@ -764,6 +883,11 @@ def main() -> None:
                         "author": args.author or LABELS[args.locale]["author"],
                         "confidentiality": args.confidentiality
                         or LABELS[args.locale]["confidentiality"],
+                        **(
+                            {"observation-projection-version": "1.1.0"}
+                            if args.observation_projection_version == "1.1.0"
+                            else {}
+                        ),
                     },
                     sort_keys=True,
                     ensure_ascii=False,
@@ -808,7 +932,16 @@ def _render(args, markdown, fonts, styles, output):
         locale=args.locale,
     )
     story = [cover, NextPageTemplate("content"), PageBreak()]
-    story.extend(markdown_to_story(markdown, styles, fonts, PAGE_WIDTH - 36 * mm, args.locale))
+    story.extend(
+        markdown_to_story(
+            markdown,
+            styles,
+            fonts,
+            PAGE_WIDTH - 36 * mm,
+            args.locale,
+            args.observation_projection_version,
+        )
+    )
     document.build(story)
 
 

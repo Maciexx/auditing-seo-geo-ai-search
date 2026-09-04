@@ -82,6 +82,62 @@ def test_wheel_contains_exact_versioned_knowledge_registry(built_wheel: Path) ->
             )
 
 
+def test_wheel_contains_exact_lighthouse_runtime_assets(built_wheel: Path) -> None:
+    prefix = "ai_search_audit/lighthouse_assets/"
+    expected = {
+        "runner.mjs",
+        "isolation.py",
+        "sidecar.py",
+        "seccomp.json",
+        "package.json",
+        "package-lock.json",
+        "Dockerfile",
+        "Dockerfile.dockerignore",
+        "README.md",
+        "LICENSE.moby",
+    }
+    with ZipFile(built_wheel) as archive:
+        actual = {
+            name.removeprefix(prefix) for name in archive.namelist() if name.startswith(prefix)
+        }
+        assert actual == expected
+        for name in expected:
+            assert (
+                archive.read(prefix + name)
+                == (ROOT / "src/ai_search_audit/lighthouse_assets" / name).read_bytes()
+            )
+
+
+def test_installed_wheel_runs_diagnostic_handshake_and_finalization_outside_checkout(
+    built_wheel: Path, tmp_path: Path, monkeypatch
+) -> None:
+    from tests.test_diagnostics_end_to_end import build_synthetic_delivery
+
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+    python = venv / "bin/python"
+    subprocess.run(
+        [str(python), "-m", "pip", "install", str(built_wheel)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    poison = tmp_path / "poisoned-pythonpath"
+    poison.mkdir()
+    marker = tmp_path / "pythonpath-leaked"
+    (poison / "sitecustomize.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('unexpected startup path')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(poison))
+    # Every application action is an installed console-command subprocess, with
+    # PYTHONPATH removed and cwd outside the checkout; no editable installation.
+    final = build_synthetic_delivery(
+        tmp_path / "outside-checkout", "en", python=python, installed=True
+    )
+    assert final.is_file()
+    assert not marker.exists(), "an installed subprocess inherited the parent PYTHONPATH"
+
+
 def test_installed_wheel_exposes_project_models_resources_and_console_command(
     built_wheel: Path, tmp_path: Path
 ) -> None:
@@ -151,6 +207,7 @@ def test_installed_wheel_runs_mocked_project_audit_outside_repository(
 
         import httpx
 
+        from ai_search_audit.knowledge import default_registry_root, load_registry
         from ai_search_audit.project_orchestrator import (
             create_project_audit,
             validate_project_bundle,
@@ -205,7 +262,7 @@ def test_installed_wheel_runs_mocked_project_audit_outside_repository(
         version_root = clients_root / "example" / manifest.versions[-1].relative_path
         validate_project_bundle(version_root, expected_project_id="example")
         audit = json.loads((version_root / "engine" / "audit.json").read_text())
-        assert audit["ruleset_version"] == "2026.08.11"
+        assert audit["ruleset_version"] == load_registry(default_registry_root()).version
         assert calls == [
             "https://example.com/robots.txt",
             "https://example.com/sitemap.xml",

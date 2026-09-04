@@ -11,8 +11,8 @@ ROOT = Path(__file__).parents[1]
 def test_registry_loads_all_required_files() -> None:
     registry = load_registry(ROOT / "knowledge")
     assert isinstance(registry, KnowledgeRegistry)
-    assert registry.version == "2026.08.11"
-    assert registry.verified_date.isoformat() == "2026-08-11"
+    assert registry.version == "2026.09.04"
+    assert registry.verified_date.isoformat() == "2026-09-04"
     assert len(registry.rules) >= 9
 
 
@@ -62,6 +62,49 @@ def test_registry_rejects_unknown_rule_id() -> None:
     registry = load_registry(ROOT / "knowledge")
     with pytest.raises(KeyError, match="missing-rule"):
         registry.resolve("missing-rule", as_of=date(2026, 8, 11))
+
+
+@pytest.mark.parametrize(
+    "rule_id,url",
+    [
+        (
+            "content-render-parity-001",
+            "https://developers.google.com/search/docs/appearance/ai-features",
+        ),
+        (
+            "content-section-context-001",
+            "https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-chunk-documents",
+        ),
+    ],
+)
+def test_content_diagnostic_rules_are_explicit_non_scoring_inferences(
+    rule_id: str, url: str
+) -> None:
+    registry = load_registry(ROOT / "knowledge")
+    rule = registry.resolve(rule_id, as_of=date(2026, 9, 3))
+    assert str(rule.source_url) == url
+    assert rule.source_type == "official_vendor_documentation_with_audit_inference"
+    assert rule.scoring_weight == 0
+    assert rule.verified_at == date(2026, 9, 2)
+    assert rule.review_interval_days > 0
+    assert 0 < rule.confidence <= 1
+    assert rule.state is RuleState.CURRENT
+    assert "audit" in rule.statement.lower()
+    assert "ranking" in rule.statement.lower()
+    assert (
+        registry.resolve(rule_id, as_of=date(2028, 1, 1)).state is RuleState.REQUIRES_VERIFICATION
+    )
+    assert all(
+        other.verified_at == date(2026, 8, 11)
+        for other in registry.rules
+        if other.rule_id
+        not in {
+            "content-render-parity-001",
+            "content-section-context-001",
+            "performance-psi-score-001",
+            "performance-lcp-thresholds-001",
+        }
+    )
 
 
 def test_openai_search_crawler_rule_uses_current_publishers_faq() -> None:

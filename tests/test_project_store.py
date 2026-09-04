@@ -481,15 +481,19 @@ def test_allocate_versions_monotonically_as_public_context_validation(tmp_path: 
     ]
 
 
-def test_allocate_version_rejects_later_public_before_creating_staging(tmp_path: Path) -> None:
+def test_allocate_version_allows_later_public_with_earlier_source_link(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path)
     project = store.create_project(project_fixture())
     project_staging = tmp_path / project.project_id / ".staging"
 
-    with pytest.raises(ValueError, match="public.*initial public-v1"):
-        store.allocate_version(project.project_id, AuditStage.PUBLIC, NOW)
-
-    assert not project_staging.exists()
+    pending = store.allocate_version(project.project_id, AuditStage.PUBLIC, NOW)
+    version = completed_version(pending).model_copy(
+        update={"source_audit_id": project.latest_audit_id}
+    )
+    promoted = store.promote(pending, version)
+    assert promoted.versions[-1].version_id == "public-v2"
+    assert promoted.versions[-1].source_audit_id == project.latest_audit_id
+    assert list(project_staging.iterdir()) == []
 
 
 def test_create_project_rejects_manifest_with_later_public_version_before_staging(
@@ -502,7 +506,7 @@ def test_create_project_rejects_manifest_with_later_public_version_before_stagin
         latest_audit_id=second.audit_id,
     )
 
-    with pytest.raises(RuntimeError, match="subsequent.*non-public"):
+    with pytest.raises(RuntimeError, match="source_audit_id.*earlier audit_id"):
         ProjectStore(tmp_path).create_project(manifest)
 
     assert not (tmp_path / ".staging").exists()
@@ -528,16 +532,17 @@ def test_new_project_rejects_public_v1_with_source_audit_id(
     assert not (tmp_path / manifest.project_id).exists()
 
 
+@pytest.mark.parametrize("stage", (AuditStage.CONTEXT, AuditStage.PUBLIC))
 @pytest.mark.parametrize("source_audit_id", (None, "missing-audit"))
 def test_later_version_rejects_missing_or_dangling_source_audit_id(
-    tmp_path: Path, source_audit_id: str | None
+    tmp_path: Path, source_audit_id: str | None, stage: AuditStage
 ) -> None:
     store = ProjectStore(tmp_path)
     project = store.create_project(project_fixture())
     project_dir = tmp_path / project.project_id
     manifest_path = project_dir / "project.json"
     original_manifest = manifest_path.read_bytes()
-    pending = store.allocate_version(project.project_id, AuditStage.CONTEXT, NOW)
+    pending = store.allocate_version(project.project_id, stage, NOW)
     invalid = completed_version(pending).model_copy(update={"source_audit_id": source_audit_id})
 
     with pytest.raises(RuntimeError, match="source_audit_id.*earlier audit_id"):
@@ -581,7 +586,7 @@ def test_promote_rejects_crafted_later_public_version(tmp_path: Path) -> None:
     )
     version = completed_version(pending)
 
-    with pytest.raises(RuntimeError, match="subsequent.*non-public"):
+    with pytest.raises(RuntimeError, match="source_audit_id.*earlier audit_id"):
         store.promote(pending, version)
 
     assert pending.staging_path.is_dir()

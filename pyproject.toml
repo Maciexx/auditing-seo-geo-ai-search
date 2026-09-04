@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "auditing-seo-geo-ai-search"
-version = "0.2.0"
+version = "0.3.0"
 description = "Evidence-led SEO, GEO, and AI Search audit Agent Skill"
 requires-python = ">=3.11"
 dependencies = [
@@ -34,7 +34,7 @@ ai-search-audit = "ai_search_audit.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_search_audit"]
 only-packages = true
-artifacts = ["src/ai_search_audit/templates/**"]
+artifacts = ["src/ai_search_audit/templates/**", "src/ai_search_audit/lighthouse_assets/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [
