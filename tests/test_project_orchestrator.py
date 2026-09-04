@@ -5,6 +5,9 @@ import hashlib
 import io
 import json
 import shutil
+import socket
+import subprocess
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,7 +15,9 @@ from typing import Any
 import httpx
 import pytest
 
+import ai_search_audit.orchestrator as orchestrator
 import ai_search_audit.project_orchestrator as project_orchestrator
+import ai_search_audit.prompts as prompts
 from ai_search_audit.comparisons import ValidationComparison
 from ai_search_audit.data_intake import (
     DateRange,
@@ -27,9 +32,10 @@ from ai_search_audit.data_intake import (
 from ai_search_audit.data_requests import (
     DataRequestModule,
     DataRequestPack,
+    EntityKind,
     render_data_request_markdown,
 )
-from ai_search_audit.models import AuditRun, DataState
+from ai_search_audit.models import AIPrompt, AuditRun, DataState, Entity, Page, Site
 from ai_search_audit.owner_context import OwnerContext, OwnerFactField
 from ai_search_audit.project_models import AuditStage, ReportStatus
 from ai_search_audit.project_orchestrator import (
@@ -40,6 +46,7 @@ from ai_search_audit.project_orchestrator import (
     validate_project_bundle,
 )
 from ai_search_audit.project_store import ProjectIdentityError, ProjectStore
+from ai_search_audit.prompt_context import PromptTopic
 from ai_search_audit.renderer import render_client_report
 from ai_search_audit.report_models import (
     ClientReportData,
@@ -70,6 +77,1075 @@ def _create(tmp_path: Path, **overrides: Any):
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_new_project_persists_explicit_prompt_selection_and_validation_reuses_policy(
+    tmp_path, monkeypatch
+):
+    from tests.test_selected_prompt_topics import _transport
+
+    selection = PromptTopic(
+        kind="category",
+        locale="en",
+        value="ceramics workshops",
+        source_url="https://studio.example/",
+        locator="content_text[29:47]",
+        quote="ceramics workshops",
+    )
+    manifest = _create(
+        tmp_path,
+        domain="studio.example",
+        selected_topics=(selection,),
+        crawler_transport=_transport(),
+    )
+    source_root = tmp_path / "clients" / "example" / manifest.versions[0].relative_path
+    source = AuditRun.model_validate_json((source_root / "engine" / "audit.json").read_text())
+    assert source.configuration["prompt_topic_selection"] == [selection.model_dump(mode="json")]
+    assert source.configuration["prompt_pack_version"] == "2.1.0"
+    prompts.validate_automatic_prompt_pack(source)
+    original = _bundle_hashes(source_root)
+    real_run = project_orchestrator.run_public_audit
+
+    def local_run(*args, **kwargs):
+        return real_run(
+            *args, **kwargs, crawler_transport=_transport(), crawler_resolver=public_resolver
+        )
+
+    monkeypatch.setattr(project_orchestrator, "run_public_audit", local_run)
+    updated = validate_project(
+        "project:example",
+        clients_root=tmp_path / "clients",
+        intake_dir=None,
+        normalized_intake=None,
+        implementation_date=date(2026, 9, 1),
+        now=datetime(2026, 9, 15, 10, tzinfo=UTC),
+    )
+    fresh_root = tmp_path / "clients" / "example" / updated.versions[-1].relative_path
+    fresh = AuditRun.model_validate_json((fresh_root / "engine" / "audit.json").read_text())
+    assert fresh.configuration["prompt_pack_version"] == "2.1.0"
+    assert fresh.configuration["prompt_context_policy"] == "1.1.0"
+    assert (
+        fresh.configuration["prompt_topic_selection"]
+        == source.configuration["prompt_topic_selection"]
+    )
+    prompts.validate_automatic_prompt_pack(fresh)
+    assert _bundle_hashes(source_root) == original
+
+
+@pytest.mark.parametrize("source_selected", [False, True])
+def test_validation_can_explicitly_select_new_policy_or_reselect_changed_source(
+    tmp_path, monkeypatch, source_selected
+):
+    from tests.test_selected_prompt_topics import _selection, _transport
+
+    old_selection = PromptTopic(
+        kind="category",
+        locale="en",
+        value="ceramics workshops",
+        source_url="https://studio.example/",
+        locator="content_text[29:47]",
+        quote="ceramics workshops",
+    )
+    manifest = _create(
+        tmp_path,
+        domain="studio.example",
+        crawler_transport=_transport(),
+        selected_topics=(old_selection,) if source_selected else None,
+    )
+    source_root = tmp_path / "clients" / "example" / manifest.versions[0].relative_path
+    source = AuditRun.model_validate_json((source_root / "engine" / "audit.json").read_text())
+    original = _bundle_hashes(source_root)
+    fresh_page = source.pages[0].model_copy(
+        update={"content_text": "Updated " + source.pages[0].content_text}
+    )
+    new_selection = _selection(fresh_page)
+    real_run = project_orchestrator.run_public_audit
+
+    def local_run(*args, **kwargs):
+        return real_run(
+            *args,
+            **kwargs,
+            crawler_transport=_transport("Updated "),
+            crawler_resolver=public_resolver,
+        )
+
+    monkeypatch.setattr(project_orchestrator, "run_public_audit", local_run)
+    options = dict(
+        clients_root=tmp_path / "clients",
+        intake_dir=None,
+        normalized_intake=None,
+        implementation_date=date(2026, 9, 1),
+        now=datetime(2026, 9, 15, 10, tzinfo=UTC),
+    )
+    if source_selected:
+        with pytest.raises(ValueError, match="selection"):
+            validate_project("project:example", **options)
+        assert _bundle_hashes(source_root) == original
+    updated = validate_project("project:example", selected_topics=(new_selection,), **options)
+    assert len(updated.versions) == 2
+    fresh_root = tmp_path / "clients" / "example" / updated.versions[-1].relative_path
+    fresh = AuditRun.model_validate_json((fresh_root / "engine" / "audit.json").read_text())
+    assert fresh.configuration["prompt_pack_version"] == "2.1.0"
+    assert fresh.configuration["prompt_topic_selection"] == [new_selection.model_dump(mode="json")]
+    prompts.validate_automatic_prompt_pack(fresh)
+    assert _bundle_hashes(source_root) == original
+
+
+def _bundle_hashes(root: Path) -> dict[str, str]:
+    return {
+        str(path.relative_to(root)): _sha256(path) for path in root.rglob("*") if path.is_file()
+    }
+
+
+@pytest.fixture
+def offline_foundations(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("foundation integration tests must not make live network requests")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+
+
+def _service_transport(request: httpx.Request, *, ecommerce: bool = False) -> httpx.Response:
+    """Synthetic bilingual public site, also reusable for local report QA."""
+    if request.url.path == "/robots.txt":
+        return httpx.Response(200, text="User-agent: *\nAllow: /\n", request=request)
+    if request.url.path not in {"/", "/pl/"}:
+        return httpx.Response(404, request=request)
+    base = f"https://{request.url.host}"
+    locale = "pl" if request.url.path == "/pl/" else "en"
+    category = "Tworzenie oprogramowania" if locale == "pl" else "Software development"
+    area = "Polska" if locale == "pl" else "Poland"
+    product = "Niebieski kubek" if locale == "pl" else "Blue mug"
+    offer = (
+        {
+            "@type": "Product",
+            "name": product,
+            "sku": "MUG-1",
+            "offers": {"@type": "Offer", "price": "19.95", "priceCurrency": "PLN"},
+        }
+        if ecommerce
+        else {"@type": "Service", "serviceType": category, "areaServed": area}
+    )
+    graph = {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "OnlineStore" if ecommerce else "OnlineBusiness",
+                "@id": f"{base}/#org",
+                "name": "Example Studio",
+                "url": f"{base}/",
+            },
+            {
+                "@type": "WebSite",
+                "name": "Example Studio website",
+                "url": f"{base}/",
+                "publisher": {"@id": f"{base}/#org"},
+            },
+            offer,
+        ],
+    }
+    visible_offer = f"{product}. SKU MUG-1. 19.95 PLN." if ecommerce else f"{category}. {area}."
+    return httpx.Response(
+        200,
+        text=(
+            f"<html lang='{locale}'><head><title>Example Studio</title>"
+            f"<link rel='canonical' href='{base}{request.url.path}'>"
+            f'<script type="application/ld+json">{json.dumps(graph)}</script>'
+            f"</head><body><main><h1>Example Studio</h1><p>{visible_offer}</p>"
+            "<a href='/'>English</a><a href='/pl/'>Polski</a></main></body></html>"
+        ),
+        headers={"content-type": "text/html"},
+        request=request,
+    )
+
+
+@pytest.mark.parametrize("ecommerce", [False, True])
+def test_public_foundations_are_source_bound_and_bundle_reads_are_immutable(
+    tmp_path, offline_foundations, ecommerce
+):
+    manifest = _create(
+        tmp_path,
+        domain="https://studio.example",
+        crawler_transport=httpx.MockTransport(
+            lambda request: _service_transport(request, ecommerce=ecommerce)
+        ),
+    )
+    root = tmp_path / "clients/example" / manifest.versions[0].relative_path
+    before = _bundle_hashes(root)
+    audit = AuditRun.model_validate_json((root / "engine/audit.json").read_text())
+    pack = json.loads((root / "engine/ai-prompts.json").read_text())
+    request = DataRequestPack.model_validate_json(
+        (root / "next-audit-data-request.json").read_text()
+    )
+
+    assert audit.configuration["entity_classification_policy"] == "2.0.0"
+    assert audit.configuration["prompt_pack_version"] == pack["version"] == "2.0.0"
+    assert audit.configuration["prompt_context_policy"] == "1.0.0"
+    assert {prompt["pack_version"] for prompt in pack["prompts"]} == {"2.0.0"}
+    assert pack["prompts"] == [prompt.model_dump(mode="json") for prompt in audit.ai_prompts]
+    assert pack["observed_ai_visibility_state"] == "UNAVAILABLE"
+    assert not audit.ai_observations
+    measurement = next(score for score in audit.scores if score.name == "Measurement Maturity")
+    assert measurement.state is DataState.UNAVAILABLE and measurement.value is None
+    assert audit.entity is not None and audit.entity.brand == "Example Studio"
+    assert audit.entity.type == ("OnlineStore" if ecommerce else "OnlineBusiness")
+    assert request.entity_kind is (EntityKind.ECOMMERCE if ecommerce else EntityKind.GENERIC)
+    assert (
+        DataRequestModule.MERCHANT_CENTER in {item.module for item in request.items}
+    ) == ecommerce
+    assert {page.language for page in audit.pages} == {"pl", "en"}
+    assert Counter(prompt.locale for prompt in audit.ai_prompts) == {"pl": 6, "en": 6}
+    assert all(prompt.target_entities == ["Example Studio"] for prompt in audit.ai_prompts)
+    context = audit.configuration["prompt_context"]
+    if ecommerce:
+        assert context == []
+        assert not any(prompt.intent == "category_discovery" for prompt in audit.ai_prompts)
+    else:
+        assert {(topic["locale"], topic["kind"], topic["value"]) for topic in context} == {
+            ("en", "category", "Software development"),
+            ("en", "service_area", "Poland"),
+            ("pl", "category", "Tworzenie oprogramowania"),
+            ("pl", "service_area", "Polska"),
+        }
+        for topic in context:
+            page = next(page for page in audit.pages if str(page.final_url) == topic["source_url"])
+            field = "serviceType" if topic["kind"] == "category" else "areaServed"
+            assert topic["locator"] == f"json_ld[0].@graph[2].{field}"
+            assert topic["quote"] == topic["value"] == page.json_ld[0]["@graph"][2][field]
+            assert topic["quote"] in page.content_text
+        for locale, category, area in (
+            ("en", "Software development", "Poland"),
+            ("pl", "Tworzenie oprogramowania", "Polska"),
+        ):
+            discovery = next(
+                prompt
+                for prompt in audit.ai_prompts
+                if prompt.locale == locale and prompt.intent == "category_discovery"
+            )
+            assert category in discovery.text and area in discovery.text
+            assert discovery.query_themes == ["Example Studio", category, area]
+            comparison = next(
+                prompt
+                for prompt in audit.ai_prompts
+                if prompt.locale == locale and prompt.intent == "comparison"
+            )
+            assert category in comparison.text
+            assert comparison.query_themes == ["Example Studio", category]
+    prompts.validate_automatic_prompt_pack(audit)
+    validate_project_bundle(root, expected_project_id="example")
+    assert _bundle_hashes(root) == before
+
+
+@pytest.mark.parametrize(
+    ("policy", "value", "error"),
+    [
+        ("entity_classification_policy", "1.0.0", "data-request identity"),
+        ("prompt_pack_version", "1.1.0", "mismatched prompt pack version"),
+    ],
+)
+def test_foundation_policy_artifact_disagreement_rejects_after_external_rehash(
+    tmp_path, offline_foundations, policy, value, error
+):
+    manifest = _create(
+        tmp_path,
+        domain="https://studio.example",
+        crawler_transport=httpx.MockTransport(_service_transport),
+    )
+    root = tmp_path / "clients/example" / manifest.versions[0].relative_path
+    audit_path = root / "engine/audit.json"
+    payload = json.loads(audit_path.read_text())
+    payload["configuration"][policy] = value
+    audit_path.write_text(json.dumps(payload), encoding="utf-8")
+    _rehash_output_manifest(root)
+    before = _bundle_hashes(root)
+
+    with pytest.raises(ValueError, match=error):
+        validate_project_bundle(root, expected_project_id="example")
+
+    assert _bundle_hashes(root) == before
+
+
+def _legacy_example_prompts(site: Site, **_ignored: Any) -> list[AIPrompt]:
+    """Frozen actual 1.1.0 output for _create's Example crawl, independent of today's generator."""
+    assert site.domain == "example.com" and site.brand == "Example"
+    rows = [
+        ("en", "brand_discovery", "29c45a3a1469", "What is Example, and what is it known for?"),
+        (
+            "en",
+            "category_discovery",
+            "456e1ef59a9c",
+            "Which Hotel options should I consider in its target market?",
+        ),
+        (
+            "en",
+            "comparison",
+            "9003b0ca7ffa",
+            "Compare Example with similar Hotel options in its target market.",
+        ),
+        (
+            "en",
+            "recommendation",
+            "74b99d1b3e65",
+            "Would you recommend Example for someone looking for Hotel in its target market?",
+        ),
+        (
+            "en",
+            "factual_verification",
+            "23409c5a9df8",
+            "What verified services, location details, and key facts are published about Example?",
+        ),
+        (
+            "en",
+            "location_service",
+            "00165430f2d5",
+            "Which Hotel services does Example provide in its target market?",
+        ),
+        (
+            "pl",
+            "brand_discovery",
+            "125649af5da6",
+            "Czym jest Example i z czego jest znana ta marka?",
+        ),
+        (
+            "pl",
+            "category_discovery",
+            "b4b8d1bbf3e0",
+            "Które oferty w kategorii Hotel warto rozważyć w docelowym rynku?",
+        ),
+        (
+            "pl",
+            "comparison",
+            "f4aac4fec400",
+            "Porównaj Example z podobnymi ofertami Hotel w docelowym rynku.",
+        ),
+        (
+            "pl",
+            "recommendation",
+            "a59587ff38b3",
+            "Czy warto wybrać Example, szukając Hotel w docelowym rynku?",
+        ),
+        (
+            "pl",
+            "factual_verification",
+            "47d41843c065",
+            "Jakie zweryfikowane usługi, dane lokalizacyjne i kluczowe fakty "
+            "opublikowano o Example?",
+        ),
+        (
+            "pl",
+            "location_service",
+            "e2e9d8f8fb80",
+            "Jakie usługi Hotel oferuje Example w docelowym rynku?",
+        ),
+    ]
+    return [
+        AIPrompt(
+            prompt_id=f"{intent}-{locale}-{digest}",
+            pack_version="1.1.0",
+            locale=locale,
+            intent=intent,
+            text=text,
+            target_entities=["Example"],
+            query_themes=["Example", "Hotel", "Private stays", "Example Hotel"],
+            expected_evidence_needs=["official website", "independent authoritative source"],
+            suggested_providers=[
+                "openai-search",
+                "gemini-grounding",
+                "perplexity",
+                "claude-search",
+            ],
+        )
+        for locale, intent, digest, text in rows
+    ]
+
+
+def _create_legacy(tmp_path: Path, monkeypatch, **overrides: Any):
+    """Create legacy artifacts once, with historical prompts and policy set before compilation."""
+    compile_run = orchestrator.compile_audit_run
+
+    def compile_legacy(run: AuditRun, **kwargs):
+        run.configuration["entity_classification_policy"] = "1.0.0"
+        run.configuration["prompt_pack_version"] = "1.1.0"
+        run.configuration.pop("prompt_context_policy", None)
+        run.configuration.pop("prompt_context", None)
+        return compile_run(run, **kwargs)
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(orchestrator, "generate_prompt_pack", _legacy_example_prompts)
+        legacy.setattr(orchestrator, "compile_audit_run", compile_legacy)
+        return _create(tmp_path, **overrides)
+
+
+def test_saved_bundle_prompt_version_survives_generator_upgrade(tmp_path, monkeypatch):
+    manifest = _create_legacy(tmp_path, monkeypatch)
+    root = tmp_path / "clients" / "example" / manifest.versions[0].relative_path
+    before = {path.relative_to(root): _sha256(path) for path in root.rglob("*") if path.is_file()}
+    saved = json.loads((root / "engine" / "ai-prompts.json").read_text())
+    assert saved["version"] == "1.1.0"
+    assert {prompt["pack_version"] for prompt in saved["prompts"]} == {"1.1.0"}
+
+    monkeypatch.setattr(prompts, "PROMPT_PACK_VERSION", "2.0.0")
+    monkeypatch.setattr(project_orchestrator, "PROMPT_PACK_VERSION", "2.0.0", raising=False)
+
+    validate_project_bundle(root, expected_project_id="example")
+
+    after = {path.relative_to(root): _sha256(path) for path in root.rglob("*") if path.is_file()}
+    assert after == before
+
+
+def test_compile_saved_prompt_pack_preserves_version_after_generator_upgrade(tmp_path, monkeypatch):
+    manifest = _create_legacy(tmp_path, monkeypatch)
+    root = tmp_path / "clients" / "example" / manifest.versions[0].relative_path
+    run = AuditRun.model_validate_json((root / "engine" / "audit.json").read_text())
+    saved = (root / "engine" / "ai-prompts.json").read_bytes()
+    assert {prompt.pack_version for prompt in run.ai_prompts} == {"1.1.0"}
+    monkeypatch.setattr(prompts, "PROMPT_PACK_VERSION", "2.0.0")
+    monkeypatch.setattr(orchestrator, "PROMPT_PACK_VERSION", "2.0.0", raising=False)
+
+    orchestrator.compile_audit_run(run, output_dir=tmp_path / "recompiled", report_locale="en")
+
+    assert (tmp_path / "recompiled" / "ai-prompts.json").read_bytes() == saved
+
+
+def test_frozen_legacy_lifecycle_preserves_baseline_and_new_crawl_is_noncomparable(
+    tmp_path, monkeypatch, offline_foundations
+):
+    from ai_search_audit.benchmark import (
+        compare_benchmarks,
+        prepare_benchmark_worksheet,
+        validate_benchmark_responses,
+    )
+    from ai_search_audit.client_delivery import finalize_client_report
+    from ai_search_audit.comparisons import ComparisonLimitation
+    from ai_search_audit.diagnostic_sources import load_diagnostic_source
+    from ai_search_audit.diagnostic_store import DiagnosticStore
+    from tests.test_benchmark import _setup
+    from tests.test_client_pdf_script import render_edition
+    from tests.test_diagnostic_workflow import _contract
+
+    manifest = _create_legacy(tmp_path, monkeypatch, client_name="Example Studio")
+    project_root = tmp_path / "clients/example"
+    public_root = project_root / manifest.versions[0].relative_path
+    original_files = _bundle_hashes(public_root)
+    saved_pack = (public_root / "engine/ai-prompts.json").read_bytes()
+    original = AuditRun.model_validate_json((public_root / "engine/audit.json").read_text())
+    assert original.configuration["entity_classification_policy"] == "1.0.0"
+    assert original.configuration["prompt_pack_version"] == "1.1.0"
+    assert "prompt_context_policy" not in original.configuration
+    assert "prompt_context" not in original.configuration
+    assert original.ai_prompts == _legacy_example_prompts(original.site)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("saved legacy operations must not crawl or regenerate prompts")
+
+    with monkeypatch.context() as historical:
+        historical.setattr(project_orchestrator, "run_public_audit", forbidden)
+        historical.setattr(orchestrator, "generate_prompt_pack", forbidden)
+        historical.setattr(prompts, "generate_prompt_pack", forbidden)
+        contract = _contract(project_root)
+        worksheet = prepare_benchmark_worksheet(contract.source, _setup())
+        assert worksheet.pack_version == "1.1.0"
+        assert [prompt.model_dump(mode="json") for prompt in worksheet.prompts] == [
+            prompt.model_dump(mode="json") for prompt in original.ai_prompts
+        ]
+        baseline_path = _benchmark_run(project_root)
+        baseline_run = DiagnosticStore(project_root).load("public-v1", baseline_path.name)
+        baseline = baseline_run.run.benchmark
+        assert baseline is not None
+        assert baseline_run.run.cleanup.status == "deleted"
+        assert baseline.worksheet == worksheet
+        baseline_before = baseline.model_dump_json()
+        baseline_files = _bundle_hashes(baseline_path)
+        assert _bundle_hashes(public_root) == original_files
+
+        imported = prompts.import_observations(
+            [
+                {
+                    "observation_id": "legacy-observation",
+                    "prompt_id": worksheet.prompts[0].prompt_id,
+                    "provider": "interactive-openai-search",
+                    "observed_at": NOW.isoformat(),
+                    "grounded": True,
+                    "brand_mentioned": True,
+                    "citations": ["https://example.com/"],
+                }
+            ]
+        )
+        assert imported[0].prompt_id == original.ai_prompts[0].prompt_id
+
+        owned, intake = _owner_intake(tmp_path, entity="Example Studio")
+        context = update_project_context(
+            "project:example",
+            clients_root=project_root.parent,
+            intake_dir=owned,
+            normalized_intake=intake,
+            now=NOW,
+        )
+        assert not owned.exists()
+        context_version = context.versions[-1]
+        context_root = project_root / context_version.relative_path
+        context_files = _bundle_hashes(context_root)
+        metrics_dir, metrics = _visibility_intake(tmp_path)
+        enriched = enrich_project(
+            "project:example",
+            clients_root=project_root.parent,
+            intake_dir=metrics_dir,
+            normalized_intake=metrics,
+            now=NOW.replace(hour=11),
+        )
+        assert not metrics_dir.exists()
+        assert _bundle_hashes(context_root) == context_files
+        for version in enriched.versions:
+            root = project_root / version.relative_path
+            run = AuditRun.model_validate_json((root / "engine/audit.json").read_text())
+            assert original.configuration.items() <= run.configuration.items()
+            assert run.ai_prompts == original.ai_prompts
+            assert (root / "engine/ai-prompts.json").read_bytes() == saved_pack
+            source = load_diagnostic_source(
+                "project:example",
+                clients_root=project_root.parent,
+                source_version=version.version_id,
+            )
+            current = prepare_benchmark_worksheet(source, _setup())
+            assert current.prompts == worksheet.prompts
+            assert current.pack_content_hash == worksheet.pack_content_hash
+            assert current.pack_version == "1.1.0"
+        assert enriched.versions[-1].source_audit_id == context_version.audit_id
+        visibility = json.loads(
+            (
+                project_root
+                / enriched.versions[-1].relative_path
+                / "aggregates/visibility-metrics.json"
+            ).read_text()
+        )
+        assert visibility["metrics"][0]["value"] == 0
+        assert visibility["metrics"][0]["state"] == "AVAILABLE"
+        historical_files = _bundle_hashes(project_root / "audits")
+
+        rendered, markdown, pdf, _, command = render_edition(tmp_path, hero=False)
+        assert rendered.returncode == 0, rendered.stderr
+        rendered = subprocess.run(
+            command + ["--audit-id", original.audit_id], capture_output=True, text=True
+        )
+        assert rendered.returncode == 0, rendered.stderr
+        edition = finalize_client_report(
+            "project:example",
+            clients_root=project_root.parent,
+            version_id="public-v1",
+            markdown_path=markdown,
+            pdf_path=pdf,
+            reviewed_pdf_sha256=_sha256(pdf),
+            no_hero_reason="No suitable controlled image",
+            diagnostic_run_ref=f"public-v1/{baseline_path.name}",
+        )
+        delivery = json.loads((edition / "delivery.json").read_text())
+        assert delivery["audit_id"] == original.audit_id
+        assert delivery["diagnostic_run"]["manifest_sha256"] == baseline_run.manifest_sha256
+        assert delivery["report_status"] == "PUBLIC_EVIDENCE_DRAFT"
+        assert _bundle_hashes(project_root / "audits") == historical_files
+        assert _bundle_hashes(public_root) == original_files
+        assert _bundle_hashes(baseline_path) == baseline_files
+
+    validated = _diagnostic_validation(tmp_path, monkeypatch)
+    fresh_version = validated.versions[-1]
+    fresh_root = project_root / fresh_version.relative_path
+    fresh = AuditRun.model_validate_json((fresh_root / "engine/audit.json").read_text())
+    assert fresh_version.source_audit_id == enriched.latest_audit_id
+    assert fresh.configuration["entity_classification_policy"] == "2.0.0"
+    assert fresh.configuration["prompt_pack_version"] == "2.0.0"
+    assert {prompt.pack_version for prompt in fresh.ai_prompts} == {"2.0.0"}
+    assert [prompt.text for prompt in fresh.ai_prompts] != [
+        prompt.text for prompt in original.ai_prompts
+    ]
+    comparison = ValidationComparison.model_validate_json(
+        (fresh_root / "aggregates/validation-comparison.json").read_text()
+    )
+    assert comparison.ai_visibility is not None
+    assert comparison.ai_visibility.state is DataState.UNKNOWN
+    assert ComparisonLimitation.PROMPT_PACK_MISMATCH in comparison.ai_visibility.limitations
+    assert comparison.ai_visibility.absolute_delta is None
+    fresh_source = load_diagnostic_source(
+        "project:example", clients_root=project_root.parent, source_version=fresh_version.version_id
+    )
+    fresh_worksheet = prepare_benchmark_worksheet(fresh_source, _setup())
+    assert fresh_worksheet.pack_content_hash != worksheet.pack_content_hash
+    assert fresh_worksheet.setup_fingerprint == worksheet.setup_fingerprint
+    prompt = next(prompt for prompt in fresh_worksheet.prompts if prompt.locale == "en")
+    follow_up = validate_benchmark_responses(
+        fresh_source,
+        fresh_worksheet,
+        [
+            dict(
+                prompt_id=prompt.prompt_id,
+                prompt_text=prompt.text,
+                observed_at=(NOW + timedelta(days=15)).isoformat(),
+                response_text="No matching business was returned in this synthetic response.",
+                complete=True,
+                grounded=True,
+                brand_mentioned=False,
+                response_truncated=False,
+                citations=[],
+                citations_complete=True,
+                inspection_scope="full_response",
+            )
+        ],
+    )
+    result = compare_benchmarks(
+        baseline, follow_up, baseline_source=contract.source, follow_up_source=fresh_source
+    )
+    assert result.state is DataState.UNKNOWN
+    assert result.limitations == ("Full prompt pack content differs.",)
+    assert result.mention_delta is result.citation_delta is None
+    assert result.baseline_metrics.measured == result.follow_up_metrics.measured == 1
+    assert baseline.model_dump_json() == baseline_before
+    reread = DiagnosticStore(project_root).load("public-v1", baseline_path.name)
+    assert reread.run.benchmark == baseline
+    assert reread.manifest_sha256 == baseline_run.manifest_sha256
+    assert _bundle_hashes(baseline_path) == baseline_files
+    assert all(
+        _sha256(project_root / "audits" / path) == digest
+        for path, digest in historical_files.items()
+    )
+
+
+@pytest.mark.parametrize("configuration", [{}, {"entity_classification_policy": "1.0.0"}])
+@pytest.mark.parametrize(
+    ("entity_type", "structured_data"),
+    [
+        ("OnlineBusiness", {}),
+        ("CollectionPage", {}),
+        ("Product", {}),
+        ("Organization", {"@type": "OnlineBusiness"}),
+        ("Organization", {"@type": "CollectionPage"}),
+        ("Service", {"@type": "Service", "offers": {"@type": "Offer"}}),
+    ],
+)
+def test_legacy_entity_policy_preserves_broad_ecommerce_classification(
+    configuration, entity_type, structured_data
+):
+    run = AuditRun(
+        audit_id="audit-example",
+        audit_engine_version="0.2.0",
+        site=Site(domain="studio.example", base_url="https://studio.example"),
+        ruleset_version="test",
+        ruleset_verified_date=date(2026, 9, 3),
+        timestamp=NOW,
+        scores=[],
+        configuration=configuration,
+        entity=Entity(brand="Studio", type=entity_type, domain="studio.example"),
+        pages=[
+            Page(
+                url="https://studio.example",
+                final_url="https://studio.example",
+                status_code=200,
+                json_ld=[structured_data],
+            )
+        ],
+    )
+    before = run.model_dump_json()
+
+    assert project_orchestrator._entity_kind(run) is EntityKind.ECOMMERCE
+    assert run.model_dump_json() == before
+
+
+@pytest.mark.parametrize("marker", [None, "", "3.0.0", 1, True, [], {}])
+def test_entity_classifier_rejects_unknown_policy(marker):
+    run = AuditRun(
+        audit_id="audit-example",
+        audit_engine_version="0.2.0",
+        site=Site(domain="studio.example", base_url="https://studio.example"),
+        ruleset_version="test",
+        ruleset_verified_date=date(2026, 9, 3),
+        timestamp=NOW,
+        scores=[],
+        configuration={"entity_classification_policy": marker},
+    )
+
+    with pytest.raises(ValueError, match="unsupported entity classification policy"):
+        project_orchestrator._entity_kind(run)
+
+
+def _diagnostic_validation(tmp_path, monkeypatch, **options):
+    real_run = project_orchestrator.run_public_audit
+
+    def local_run(*args, **kwargs):
+        return real_run(
+            *args,
+            **kwargs,
+            crawler_transport=httpx.MockTransport(transport),
+            crawler_resolver=public_resolver,
+        )
+
+    monkeypatch.setattr(project_orchestrator, "run_public_audit", local_run)
+    return validate_project(
+        "project:example",
+        clients_root=tmp_path / "clients",
+        intake_dir=None,
+        normalized_intake=None,
+        implementation_date=date(2026, 9, 1),
+        now=datetime(2026, 9, 15, 10, tzinfo=UTC),
+        **options,
+    )
+
+
+def _benchmark_run(root, *, mentioned=True, model="example-1.0", observed_at=NOW):
+    from tests.test_benchmark import _setup
+    from tests.test_diagnostic_workflow import _contract, _intake, _run
+
+    contract = _contract(root)
+    prompt = next(p for p in contract.worksheet.prompts if p.locale == "en")
+    return _run(
+        root,
+        owned=_intake(
+            root,
+            worksheet=contract.worksheet.model_dump(mode="json"),
+            setup=_setup(model_id=model).model_dump(mode="json"),
+            responses=[
+                dict(
+                    prompt_id=prompt.prompt_id,
+                    prompt_text=prompt.text,
+                    observed_at=observed_at.isoformat(),
+                    response_text="Studio service.",
+                    complete=True,
+                    grounded=True,
+                    brand_mentioned=mentioned,
+                    response_truncated=False,
+                    citations=[f"https://{contract.source.binding.domain}/"] if mentioned else [],
+                    citations_complete=True,
+                    inspection_scope="full_response",
+                )
+            ],
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "mode", ["absent", "missing", "comparable", "unknown-model", "different-model"]
+)
+def test_validation_persists_source_bound_supplementary_diagnostics(tmp_path, monkeypatch, mode):
+    from ai_search_audit.diagnostic_store import DiagnosticStore
+    from tests.test_diagnostic_workflow import _run
+
+    initial = _create(tmp_path, domain="https://studio.example")
+    root = tmp_path / "clients/example"
+    options = {}
+    if mode != "absent":
+        if mode == "missing":
+            _run(root)
+            _run(root)
+        else:
+            _benchmark_run(root, mentioned=False)
+            _benchmark_run(
+                root,
+                model=None
+                if mode == "unknown-model"
+                else "example-2.0"
+                if mode == "different-model"
+                else "example-1.0",
+                observed_at=NOW + timedelta(days=1),
+            )
+        options = dict(
+            baseline_diagnostic_run="public-v1/run-1", follow_up_diagnostic_run="public-v1/run-2"
+        )
+    manifest = _diagnostic_validation(tmp_path, monkeypatch, **options)
+    version = manifest.versions[-1]
+    bundle = root / version.relative_path
+    snapshot = validate_project_bundle(
+        bundle,
+        expected_project_id="example",
+        expected_version_number=2,
+        expected_source_audit_id=initial.latest_audit_id,
+        expect_owner_context=False,
+        expect_validation_comparison=True,
+        expected_stage=AuditStage.VALIDATION,
+    )
+    report = ClientReportData.model_validate_json(
+        snapshot.files["engine/client-report-data.json"].content
+    )
+    field = "supplementary_diagnostic_comparison"
+    if mode == "absent":
+        assert getattr(report, field) is None
+        assert field not in report.model_dump(mode="json")
+        assert "aggregates/supplementary-diagnostic-comparison.json" not in snapshot.files
+        # Pre-Task-9 serialization: no optional-null key may alter deterministic PDF IDs.
+        payload = report.model_dump(mode="json")
+        legacy = {
+            "project": payload["project"],
+            "owner_context": payload["owner_context"],
+            "measurement": payload["measurement"],
+            "validation_comparison": payload["validation_comparison"],
+        }
+        assert (
+            report.context_digest
+            == hashlib.sha256(
+                json.dumps(
+                    legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+        )
+    else:
+        projected = getattr(report, field)
+        canonical = json.loads(
+            snapshot.files["aggregates/supplementary-diagnostic-comparison.json"].content
+        )
+        assert projected.model_dump(mode="json") == canonical
+        left = DiagnosticStore(root).load("public-v1", "run-1")
+        right = DiagnosticStore(root).load("public-v1", "run-2")
+        assert projected.baseline_binding == left.run.binding
+        assert projected.follow_up_binding == right.run.binding
+        assert projected.baseline_manifest_sha256 == left.manifest_sha256
+        assert projected.follow_up_manifest_sha256 == right.manifest_sha256
+        assert projected.baseline_collection_range == left.run.collection_range
+        assert projected.follow_up_collection_range == right.run.collection_range
+        assert projected.comparison.mention_delta == (100 if mode == "comparable" else None)
+        assert projected.comparison.citation_delta == (100 if mode == "comparable" else None)
+        if mode == "missing":
+            assert projected.comparison.baseline_metrics.state is DataState.UNAVAILABLE
+            assert projected.comparison.baseline_metrics.mention_rate is None
+        assert report.ai_search.observed_visibility_state is DataState.UNAVAILABLE
+        assert report.audit_timestamp != projected.follow_up_collection_range.start
+        assert version.report_status is ReportStatus.CLIENT_CONTEXT_DRAFT
+
+
+@pytest.mark.parametrize(
+    "baseline,followup",
+    [
+        ("public-v1/run-1", None),
+        (None, "public-v1/run-1"),
+        ("../other/run-1", "public-v1/run-1"),
+        ("latest/run-1", "public-v1/run-1"),
+        ("public-v1/run-99", "public-v1/run-1"),
+    ],
+)
+def test_validation_rejects_invalid_diagnostic_references_before_crawl(
+    tmp_path, monkeypatch, baseline, followup
+):
+    _create(tmp_path, domain="https://studio.example")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid diagnostic references must fail before fresh crawl")
+
+    monkeypatch.setattr(project_orchestrator, "run_public_audit", forbidden)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        validate_project(
+            "project:example",
+            clients_root=tmp_path / "clients",
+            intake_dir=None,
+            normalized_intake=None,
+            implementation_date=date(2026, 9, 1),
+            baseline_diagnostic_run=baseline,
+            follow_up_diagnostic_run=followup,
+        )
+    assert len(ProjectStore(tmp_path / "clients").load("example").versions) == 1
+
+
+def test_diagnostic_comparison_rejects_symlinked_clients_ancestor(tmp_path):
+    from ai_search_audit.diagnostic_models import DiagnosticRunReference
+    from ai_search_audit.diagnostic_workflow import compare_diagnostic_runs
+    from tests.test_diagnostic_workflow import _run
+
+    _create(tmp_path, domain="https://studio.example")
+    root = tmp_path / "clients/example"
+    _run(root)
+    link = tmp_path / "linked-clients"
+    link.symlink_to(root.parent, target_is_directory=True)
+    reference = DiagnosticRunReference(source_version="public-v1", run_id="run-1")
+    with pytest.raises(ValueError, match="real directory"):
+        compare_diagnostic_runs(
+            "project:example",
+            clients_root=link,
+            baseline_reference=reference,
+            follow_up_reference=reference,
+        )
+
+
+def test_validation_rejects_intact_cross_project_diagnostic_run(tmp_path, monkeypatch):
+    from tests.test_diagnostic_workflow import _run
+
+    _create(tmp_path, domain="https://studio.example")
+    _create(tmp_path, domain="https://other.example", project_id="other")
+    root = tmp_path / "clients/example"
+    _run(root)
+    original = _run(tmp_path / "clients/other")
+    shutil.copytree(original, root / "diagnostics/public-v1/run-2")
+    with pytest.raises(ValueError):
+        _diagnostic_validation(
+            tmp_path,
+            monkeypatch,
+            baseline_diagnostic_run="public-v1/run-1",
+            follow_up_diagnostic_run="public-v1/run-2",
+        )
+    assert len(ProjectStore(root.parent).load("example").versions) == 1
+
+
+def test_validate_diagnostics_rejects_original_symlink_before_project_read(tmp_path, monkeypatch):
+    _create(tmp_path, domain="https://studio.example")
+    link = tmp_path / "linked"
+    link.symlink_to(tmp_path / "clients", target_is_directory=True)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("original diagnostic path must be checked before project reads")
+
+    monkeypatch.setattr(ProjectStore, "load", forbidden)
+    with pytest.raises(ValueError, match="real directory"):
+        validate_project(
+            "project:example",
+            clients_root=link,
+            intake_dir=None,
+            normalized_intake=None,
+            implementation_date=date(2026, 9, 1),
+            baseline_diagnostic_run="public-v1/run-1",
+            follow_up_diagnostic_run="public-v1/run-2",
+        )
+
+
+def test_nested_diagnostic_history_validates_each_source_once_per_operation(tmp_path, monkeypatch):
+    from ai_search_audit.diagnostic_sources import load_diagnostic_source
+    from ai_search_audit.diagnostic_workflow import run_diagnostics
+
+    manifest = _create(tmp_path, domain="https://studio.example", max_pages=1)
+    root = tmp_path / "clients/example"
+    real_public = project_orchestrator.run_public_audit
+
+    def public_run(*args, **kwargs):
+        return real_public(
+            *args,
+            **kwargs,
+            crawler_transport=httpx.MockTransport(transport),
+            crawler_resolver=public_resolver,
+        )
+
+    monkeypatch.setattr(project_orchestrator, "run_public_audit", public_run)
+    for index in (1, 2):
+        version = manifest.versions[-1]
+        source = load_diagnostic_source(
+            "project:example", clients_root=root.parent, source_version=version.version_id
+        )
+        owned = create_owned_intake_dir(tmp_path / "nested-intake")
+        (owned / "normalized-intake.json").write_text(
+            json.dumps({"expected_binding": source.binding.model_dump(mode="json")})
+        )
+        run = run_diagnostics(
+            "project:example",
+            clients_root=root.parent,
+            source_version=version.version_id,
+            owned_dir=owned,
+            intake_root=owned.parent,
+            now=NOW + timedelta(days=index),
+            crawler_transport=httpx.MockTransport(transport),
+            crawler_resolver=public_resolver,
+        )
+        reference = f"{version.version_id}/{run.name}"
+        manifest = validate_project(
+            "project:example",
+            clients_root=root.parent,
+            intake_dir=None,
+            normalized_intake=None,
+            implementation_date=NOW.date(),
+            now=NOW + timedelta(days=index),
+            baseline_diagnostic_run=reference,
+            follow_up_diagnostic_run=reference,
+        )
+
+    calls = Counter()
+    real_render = project_orchestrator.render_client_report
+
+    def counted_render(report, destination):
+        calls[report.audit_id] += 1
+        return real_render(report, destination)
+
+    monkeypatch.setattr(project_orchestrator, "render_client_report", counted_render)
+    for _ in range(2):
+        calls.clear()
+        source = load_diagnostic_source(
+            "project:example", clients_root=root.parent, source_version="validation-v3"
+        )
+        assert source.binding.audit_id == manifest.latest_audit_id
+        assert calls == Counter({version.audit_id: 1 for version in manifest.versions})
+
+    # A later operation must not trust a source that changed after the previous success.
+    oldest = root / manifest.versions[0].relative_path / "engine/audit.json"
+    original = oldest.read_bytes()
+    oldest.write_bytes(original + b"\n")
+    with pytest.raises(ValueError, match="metadata|hash|bytes"):
+        load_diagnostic_source(
+            "project:example", clients_root=root.parent, source_version="validation-v3"
+        )
+    oldest.write_bytes(original)
+    calls.clear()
+    load_diagnostic_source(
+        "project:example", clients_root=root.parent, source_version="validation-v3"
+    )
+    assert calls == Counter({version.audit_id: 1 for version in manifest.versions})
+
+
+@pytest.mark.parametrize(
+    "tamper", ["metric", "date", "hash", "binding", "reference", "future-source"]
+)
+def test_supplementary_bundle_rejects_coherently_rehashed_projection(tmp_path, monkeypatch, tamper):
+    from ai_search_audit.report_models import SupplementaryDiagnosticComparison
+
+    initial = _create(tmp_path, domain="https://studio.example")
+    root = tmp_path / "clients/example"
+    _benchmark_run(root, mentioned=False)
+    _benchmark_run(root, model=None)
+    manifest = _diagnostic_validation(
+        tmp_path,
+        monkeypatch,
+        baseline_diagnostic_run="public-v1/run-1",
+        follow_up_diagnostic_run="public-v1/run-2",
+    )
+    version = manifest.versions[-1]
+    bundle = root / version.relative_path
+    aggregate = bundle / "aggregates/supplementary-diagnostic-comparison.json"
+    payload = json.loads(aggregate.read_text())
+    if tamper == "metric":
+        payload["comparison"]["baseline_metrics"]["mention_rate"] = 50
+    elif tamper == "date":
+        payload["baseline_collection_range"]["start"] = "2026-01-01T10:00:00Z"
+    elif tamper == "hash":
+        payload["baseline_manifest_sha256"] = "0" * 64
+    elif tamper == "binding":
+        payload["baseline_binding"]["audit_id"] = "wrong-audit"
+    elif tamper == "reference":
+        payload["baseline_reference"]["run_id"] = "run-99"
+    else:
+        payload["baseline_reference"]["source_version"] = version.version_id
+        payload["baseline_binding"]["source_version"] = version.version_id
+    projection = SupplementaryDiagnosticComparison.model_validate(payload)
+    aggregate.write_text(projection.model_dump_json())
+    audit_file = bundle / "engine/audit.json"
+    audit = json.loads(audit_file.read_text())
+    audit["configuration"]["supplementary_diagnostic_comparison_sha256"] = _sha256(aggregate)
+    audit_file.write_text(json.dumps(audit))
+    report_file = bundle / "engine/client-report-data.json"
+    report = ClientReportData.model_validate_json(report_file.read_text())
+    updated = report.model_copy(
+        update={
+            "supplementary_diagnostic_comparison": projection,
+            "context_digest": report_context_digest(
+                report.project,
+                report.owner_context,
+                report.measurement,
+                report.validation_comparison,
+                projection,
+            ),
+        }
+    )
+    report_file.write_text(updated.model_dump_json())
+    render_client_report(updated, next((bundle / "report").glob("*.pdf")))
+    _rehash_output_manifest(bundle)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        validate_project_bundle(
+            bundle,
+            expected_project_id="example",
+            expected_version_number=2,
+            expected_source_audit_id=initial.latest_audit_id,
+            expect_owner_context=False,
+            expect_validation_comparison=True,
+            expected_stage=AuditStage.VALIDATION,
+        )
 
 
 def _owner_intake(
@@ -443,9 +1519,9 @@ def test_data_request_is_tailored_to_canonical_entity_without_unobserved_modules
         ("Organization", "generic", None, DataRequestModule.MERCHANT_CENTER),
         (
             "Product",
-            "ecommerce",
+            "generic",
+            None,
             DataRequestModule.MERCHANT_CENTER,
-            DataRequestModule.GOOGLE_BUSINESS_PROFILE,
         ),
     ),
 )
@@ -491,6 +1567,58 @@ def test_data_request_maps_non_local_canonical_entity_types_explicitly(
     if expected_module is not None:
         assert expected_module in modules
     assert excluded_module not in modules
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "offer_type", "expected_kind"),
+    [
+        ("OnlineStore", "Product", EntityKind.ECOMMERCE),
+        ("OnlineStore", "Service", EntityKind.GENERIC),
+        ("OnlineBusiness", "Service", EntityKind.GENERIC),
+    ],
+)
+def test_data_request_requires_product_sales_evidence_for_merchant_center(
+    tmp_path, entity_type, offer_type, expected_kind
+):
+    graph = {
+        "@graph": [
+            {"@type": entity_type, "name": "Example"},
+            {
+                "@type": offer_type,
+                "name": "Blue mug",
+                "sku": "MUG-1",
+                "offers": {"@type": "Offer", "price": "19.95", "priceCurrency": "PLN"},
+            },
+        ]
+    }
+
+    def entity_transport(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n", request=request)
+        return httpx.Response(
+            200,
+            text=(
+                "<html lang='en'><head><title>Example</title>"
+                "<link rel='canonical' href='https://example.com/'>"
+                f'<script type="application/ld+json">{json.dumps(graph)}</script>'
+                "</head><body><h1>Example</h1><p>Blue mug</p></body></html>"
+            ),
+            headers={"content-type": "text/html"},
+            request=request,
+        )
+
+    manifest = _create(
+        tmp_path, crawler_transport=httpx.MockTransport(entity_transport), max_pages=1
+    )
+    root = tmp_path / "clients" / "example" / manifest.versions[0].relative_path
+    request = DataRequestPack.model_validate_json(
+        (root / "next-audit-data-request.json").read_text()
+    )
+    modules = {item.module for item in request.items}
+    assert request.entity_kind is expected_kind
+    assert (DataRequestModule.MERCHANT_CENTER in modules) == (expected_kind is EntityKind.ECOMMERCE)
+    assert DataRequestModule.OWNER_CONTEXT in modules
+    validate_project_bundle(root, expected_project_id="example")
 
 
 def test_missing_authenticated_measurement_still_promotes_unavailable_not_zero(
@@ -1083,6 +2211,9 @@ def test_update_project_context_reuses_persisted_audit_without_fresh_crawl(
     assert (context_root / "report" / "Example_Client_AI_Search_SEO_Audit_EN_v2.pdf").is_file()
     assert (context_root / "next-audit-data-request_en.md").is_file()
     context_audit = json.loads((context_root / "engine" / "audit.json").read_text())
+    public_configuration = json.loads(public_audit_before)["configuration"]
+    assert public_configuration["entity_classification_policy"] == "2.0.0"
+    assert public_configuration.items() <= context_audit["configuration"].items()
     assert context_audit["audit_id"] == context_version.audit_id
     assert context_audit["entity_consistency_matrix"]["canonical_entity"]["Example Client"]
     owner_evidence = [
@@ -1444,10 +2575,22 @@ def test_update_requires_explicit_existing_project_reference_and_deletes_input(
     assert not owned.exists()
 
 
+@pytest.mark.parametrize("policy", [None, "1.0.0", "2.0.0"])
 def test_enrich_project_reuses_context_without_crawl_and_retains_visibility_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: str | None
 ) -> None:
-    _create(tmp_path)
+    real_compile = orchestrator.compile_audit_run
+
+    def compile_with_source_policy(run, **kwargs):
+        if policy is None:
+            run.configuration.pop("entity_classification_policy", None)
+        else:
+            run.configuration["entity_classification_policy"] = policy
+        return real_compile(run, **kwargs)
+
+    with monkeypatch.context() as source_patch:
+        source_patch.setattr(orchestrator, "compile_audit_run", compile_with_source_policy)
+        _create(tmp_path)
     owner_dir, owner_intake = _owner_intake(tmp_path)
     context_manifest = update_project_context(
         "project:example",
@@ -1459,6 +2602,10 @@ def test_enrich_project_reuses_context_without_crawl_and_retains_visibility_only
     context_version = context_manifest.versions[-1]
     context_root = tmp_path / "clients" / "example" / context_version.relative_path
     owner_before = (context_root / "aggregates" / "owner-context.json").read_bytes()
+    context_configuration = json.loads((context_root / "engine" / "audit.json").read_text())[
+        "configuration"
+    ]
+    assert context_configuration.get("entity_classification_policy") == policy
     metric_dir, metric_intake = _visibility_intake(tmp_path)
 
     def forbidden_crawl(*_args: object, **_kwargs: object) -> object:
@@ -1487,6 +2634,10 @@ def test_enrich_project_reuses_context_without_crawl_and_retains_visibility_only
     audit = json.loads((root / "engine" / "audit.json").read_text())
     assert audit["configuration"]["source_audit_id"] == context_version.audit_id
     assert audit["configuration"]["visibility_snapshot_sha256"]
+    assert audit["configuration"].get("entity_classification_policy") == policy
+    assert {
+        key: value for key, value in context_configuration.items() if key != "source_audit_id"
+    }.items() <= audit["configuration"].items()
     report = ClientReportData.model_validate_json(
         (root / "engine" / "client-report-data.json").read_text()
     )

@@ -11,10 +11,12 @@ from pathlib import Path
 
 from .client_delivery import finalize_client_report
 from .data_intake import create_owned_intake_dir, discard_owned_intake_dir
+from .diagnostic_workflow import prepare_diagnostic_contract, run_diagnostics
 from .orchestrator import run_public_audit
 from .project_orchestrator import (
     create_project_audit,
     enrich_project,
+    refresh_project,
     update_project_context,
     validate_project,
 )
@@ -117,6 +119,9 @@ def _discard_unconsumed_intake(intake_dir: Path | None) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .measurement_cli import add_measurement_commands
+    from .observation_cli import add_observation_commands
+
     parser = argparse.ArgumentParser(prog="ai-search-audit")
     subparsers = parser.add_subparsers(dest="command", required=True)
     audit = subparsers.add_parser("audit", help="run a bounded public audit")
@@ -133,6 +138,19 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--report-locale", choices=("pl", "en"), default="en")
     project = subparsers.add_parser("project", help="manage versioned audit projects")
     project_subparsers = project.add_subparsers(dest="project_command", required=True)
+    add_measurement_commands(project_subparsers)
+    add_observation_commands(project_subparsers)
+    diagnose = project_subparsers.add_parser("diagnose", help="collect supplementary diagnostics")
+    diagnose.add_argument("project_ref")
+    diagnose.add_argument("--source-version", required=True)
+    diagnose.add_argument("--clients-root", type=Path, required=True)
+    diagnose.add_argument("--intake-root", type=Path, required=True)
+    benchmark = project_subparsers.add_parser(
+        "benchmark-prepare", help="print the frozen observation worksheet"
+    )
+    benchmark.add_argument("project_ref")
+    benchmark.add_argument("--source-version", required=True)
+    benchmark.add_argument("--clients-root", type=Path, required=True)
     create = project_subparsers.add_parser("create", help="create an initial public audit")
     create.add_argument("domain")
     create.add_argument("--clients-root", type=Path, required=True)
@@ -140,6 +158,15 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--client-name", required=True)
     create.add_argument("--report-locale", choices=("pl", "en"), required=True)
     create.add_argument("--max-pages", type=_bounded_max_pages, required=True)
+    refresh = project_subparsers.add_parser(
+        "refresh", help="append a fresh public evidence draft to an existing project"
+    )
+    refresh.add_argument("project_ref")
+    refresh.add_argument("--clients-root", type=Path, required=True)
+    refresh.add_argument("--source-version", required=True)
+    refresh.add_argument("--expected-domain", required=True)
+    refresh.add_argument("--expected-client-name", required=True)
+    refresh.add_argument("--max-pages", type=_bounded_max_pages)
     update = project_subparsers.add_parser(
         "update", help="create a context version from normalized owner input"
     )
@@ -168,6 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     validate_intake.add_argument("--intake-dir", type=Path)
     validate_intake.add_argument("--intake-root", type=Path)
     validate.add_argument("--normalized-intake", type=Path)
+    validate.add_argument("--baseline-diagnostic-run")
+    validate.add_argument("--follow-up-diagnostic-run")
     finalize = project_subparsers.add_parser("finalize", help="publish a reviewed client edition")
     finalize.add_argument("project_ref")
     finalize.add_argument("--clients-root", type=Path, required=True)
@@ -179,11 +208,49 @@ def build_parser() -> argparse.ArgumentParser:
     cover.add_argument("--hero", type=Path)
     cover.add_argument("--no-hero-reason")
     finalize.add_argument("--hero-source")
+    diagnostics = finalize.add_mutually_exclusive_group()
+    diagnostics.add_argument("--diagnostic-run")
+    diagnostics.add_argument("--diagnostic-runs", nargs="+")
+    finalize.add_argument(
+        "--observation-projection-version", choices=("1.0.0", "1.1.0"), default="1.0.0"
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "project" and args.project_command in {"observe-ai", "observation-report"}:
+        from .observation_cli import observation_command
+
+        return observation_command(args)
+    if args.command == "project" and args.project_command in {"measure", "measurement-report"}:
+        from .measurement_cli import measurement_command
+
+        return measurement_command(args)
+    if args.command == "project" and args.project_command in {"diagnose", "benchmark-prepare"}:
+        contract = prepare_diagnostic_contract(
+            args.project_ref, clients_root=args.clients_root, source_version=args.source_version
+        )
+        if args.project_command == "benchmark-prepare":
+            print(contract.worksheet.model_dump_json(indent=2))
+            return 0
+        owned = create_owned_intake_dir(args.intake_root)
+        try:
+            print(f"OWNED_INTAKE_DIR={owned}", flush=True)
+            print(f"DIAGNOSTIC_CONTRACT={contract.model_dump_json()}", flush=True)
+            if sys.stdin.readline().strip() != "READY":
+                raise ValueError("coordinated intake requires READY on stdin")
+            destination = run_diagnostics(
+                args.project_ref,
+                clients_root=args.clients_root,
+                source_version=args.source_version,
+                owned_dir=owned,
+                intake_root=args.intake_root,
+            )
+        finally:
+            _discard_unconsumed_intake(owned)
+        print(destination)
+        return 0
     if args.command == "project" and args.project_command == "finalize":
         destination = finalize_client_report(
             args.project_ref,
@@ -195,6 +262,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             hero_path=args.hero,
             hero_source=args.hero_source,
             no_hero_reason=args.no_hero_reason,
+            **(
+                {"diagnostic_run_ref": args.diagnostic_run}
+                if args.diagnostic_run is not None
+                else {}
+            ),
+            diagnostic_run_refs=(
+                tuple(args.diagnostic_runs) if args.diagnostic_runs is not None else None
+            ),
+            observation_projection_version=args.observation_projection_version,
         )
         print(destination / "client-report.pdf")
         return 0
@@ -214,6 +290,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_id=args.project_id,
             client_name=args.client_name,
             report_locale=args.report_locale,
+            max_pages=args.max_pages,
+        )
+        print(args.clients_root / manifest.project_id / manifest.versions[-1].relative_path)
+    elif args.command == "project" and args.project_command == "refresh":
+        manifest = refresh_project(
+            args.project_ref,
+            clients_root=args.clients_root,
+            source_version=args.source_version,
+            expected_domain=args.expected_domain,
+            expected_client_name=args.expected_client_name,
             max_pages=args.max_pages,
         )
         print(args.clients_root / manifest.project_id / manifest.versions[-1].relative_path)
@@ -248,6 +334,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         _discard_unconsumed_intake(intake_dir)
         print(args.clients_root / manifest.project_id / manifest.versions[-1].relative_path)
     elif args.command == "project" and args.project_command == "validate":
+        if (args.baseline_diagnostic_run is None) != (args.follow_up_diagnostic_run is None):
+            _discard_unconsumed_intake(args.intake_dir)
+            raise ValueError("baseline and follow-up diagnostic runs must be supplied together")
         intake_dir, payload = _resolve_project_intake(args, required=False)
         try:
             manifest = validate_project(
@@ -256,6 +345,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 intake_dir=intake_dir,
                 normalized_intake=payload,
                 implementation_date=args.implementation_date,
+                **(
+                    {
+                        "baseline_diagnostic_run": args.baseline_diagnostic_run,
+                        "follow_up_diagnostic_run": args.follow_up_diagnostic_run,
+                    }
+                    if args.baseline_diagnostic_run is not None
+                    else {}
+                ),
             )
         except BaseException:
             _discard_unconsumed_intake(intake_dir)

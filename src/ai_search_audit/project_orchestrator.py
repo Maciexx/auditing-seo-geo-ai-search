@@ -29,6 +29,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from .adapters import PublicResearchItem
+from .artifact_policy import classification_version, saved_prompt_version
 from .comparisons import (
     ValidationComparison,
     compare_findings,
@@ -53,7 +54,9 @@ from .data_requests import (
     render_data_request_markdown,
     write_data_request,
 )
+from .diagnostic_sources import _diagnostic_validation_operation
 from .models import AuditRun, Evidence
+from .offer_context import product_sales_urls
 from .orchestrator import compile_audit_run, run_public_audit
 from .owner_context import (
     OwnerContext,
@@ -71,9 +74,14 @@ from .project_models import (
     validate_project_id,
 )
 from .project_store import PendingVersion, ProjectIdentityError, ProjectStore
-from .prompts import PROMPT_PACK_VERSION
+from .prompt_context import PromptTopic
+from .prompts import SELECTED_PROMPT_PACK_VERSION, validate_automatic_prompt_pack
 from .renderer import render_client_report
-from .report_models import ClientReportData, ProjectReportMetadata
+from .report_models import (
+    ClientReportData,
+    ProjectReportMetadata,
+    SupplementaryDiagnosticComparison,
+)
 from .reports import ReportDraft, RewriteProvider, validate_client_report_context
 from .scoring import observed_ai_visibility
 from .visibility_metrics import (
@@ -384,6 +392,8 @@ def _validate_inventory(
         expected.add("aggregates/visibility-metrics.json")
     if include_validation_comparison:
         expected.add("aggregates/validation-comparison.json")
+        if "aggregates/supplementary-diagnostic-comparison.json" in paths:
+            expected.add("aggregates/supplementary-diagnostic-comparison.json")
     expected.update(markdown_paths)
     expected.update(report_paths)
     if require_output_manifest:
@@ -439,6 +449,16 @@ def _client_stem(client_name: str) -> str:
 
 
 def _entity_kind(run: AuditRun) -> EntityKind:
+    if classification_version(run) == "1.0.0":
+        return _entity_kind_v1(run)
+    if product_sales_urls(run.entity, run.pages):
+        return EntityKind.ECOMMERCE
+    if run.entity is not None and run.entity.type.casefold() in _LOCAL_ENTITY_TYPES:
+        return EntityKind.LOCAL
+    return EntityKind.GENERIC
+
+
+def _entity_kind_v1(run: AuditRun) -> EntityKind:
     entity_type = run.entity.type.casefold() if run.entity is not None else ""
     if entity_type in _ECOMMERCE_ENTITY_TYPES:
         return EntityKind.ECOMMERCE
@@ -580,6 +600,7 @@ def _validate_artifact(metadata: ArtifactMetadata, snapshot: _BundleSnapshot) ->
         raise ValueError(f"artifact metadata mismatch: {metadata.relative_path}")
 
 
+@_diagnostic_validation_operation
 def validate_project_bundle(
     version_root: Path,
     *,
@@ -598,9 +619,12 @@ def validate_project_bundle(
     """
     version_root = Path(version_root)
     expected_project_id = validate_project_id(expected_project_id)
+    if expected_stage is AuditStage.PUBLIC or expected_source_audit_id is None:
+        if (expected_version_number == 1) != (expected_source_audit_id is None):
+            raise ValueError("public bundle source audit must be absent only for public-v1")
     snapshot = _secure_bundle_walk(version_root)
     include_owner_context = (
-        expected_source_audit_id is not None
+        expected_source_audit_id is not None and expected_stage is not AuditStage.PUBLIC
         if expect_owner_context is None
         else expect_owner_context
     )
@@ -695,6 +719,39 @@ def validate_project_bundle(
     canonical_owner_context: OwnerContext | None = None
     canonical_visibility: VisibilitySnapshot | None = None
     canonical_comparison: ValidationComparison | None = None
+    supplementary: SupplementaryDiagnosticComparison | None = None
+    supplementary_path = "aggregates/supplementary-diagnostic-comparison.json"
+    if supplementary_path in files:
+        from .diagnostic_workflow import compare_diagnostic_runs
+
+        supplementary = SupplementaryDiagnosticComparison.model_validate_json(
+            files[supplementary_path].content
+        )
+        if (
+            audit.configuration.get("supplementary_diagnostic_comparison_sha256")
+            != files[supplementary_path].sha256
+        ):
+            raise ValueError("supplementary diagnostic comparison aggregate digest mismatch")
+        # Both canonical and pending versions are two levels below their project root.
+        project_root = version_root.parent.parent
+        project_manifest = ProjectStore(project_root.parent).load(expected_project_id)
+        for reference in (supplementary.baseline_reference, supplementary.follow_up_reference):
+            source_version = next(
+                (v for v in project_manifest.versions if v.version_id == reference.source_version),
+                None,
+            )
+            if source_version is None or source_version.version_number >= expected_version_number:
+                raise ValueError("supplementary diagnostic source must precede validation version")
+        expected_supplementary = compare_diagnostic_runs(
+            f"project:{expected_project_id}",
+            clients_root=project_root.parent,
+            baseline_reference=supplementary.baseline_reference,
+            follow_up_reference=supplementary.follow_up_reference,
+        )
+        if supplementary != expected_supplementary:
+            raise ValueError("supplementary diagnostic comparison does not match validated runs")
+    elif "supplementary_diagnostic_comparison_sha256" in audit.configuration:
+        raise ValueError("missing supplementary diagnostic comparison aggregate")
     if include_owner_context:
         canonical_owner_context = OwnerContext.model_validate_json(
             files["aggregates/owner-context.json"].content
@@ -755,14 +812,14 @@ def validate_project_bundle(
             canonical_prompt_ids=_canonical_prompt_ids(audit),
         )
     expected_project_metadata = None
-    if expected_source_audit_id is None:
+    if expected_source_audit_id is None or expected_stage is AuditStage.PUBLIC:
         expected_project_metadata = ProjectReportMetadata(
             project_id=expected_project_id,
-            version_id="public-v1",
-            version_number=1,
+            version_id=f"public-v{expected_version_number}",
+            version_number=expected_version_number,
             stage=AuditStage.PUBLIC,
             report_status=ReportStatus.PUBLIC_EVIDENCE_DRAFT,
-            source_audit_id=None,
+            source_audit_id=expected_source_audit_id,
         )
     elif expected_stage is AuditStage.VALIDATION:
         validation_status = (
@@ -801,6 +858,7 @@ def validate_project_bundle(
         owner_context=canonical_owner_context,
         visibility_snapshot=canonical_visibility,
         validation_comparison=canonical_comparison,
+        supplementary_diagnostic_comparison=supplementary,
     )
     if (
         input_manifest.public_target.canonical_domain != audit.site.domain
@@ -909,7 +967,7 @@ def validate_project_bundle(
     except json.JSONDecodeError as exc:
         raise ValueError("AI prompt pack must be valid JSON") from exc
     expected_prompt_payload = {
-        "version": PROMPT_PACK_VERSION,
+        "version": saved_prompt_version(audit),
         "observed_ai_visibility_state": observed_ai_visibility(audit.ai_observations).state.value,
         "prompts": [prompt.model_dump(mode="json") for prompt in audit.ai_prompts],
     }
@@ -938,6 +996,7 @@ def create_project_audit(
     crawler_resolver: Resolver | None = None,
     research_items: list[PublicResearchItem] | None = None,
     rewrite_provider: RewriteProvider | None = None,
+    selected_topics: tuple[PromptTopic, ...] | None = None,
 ) -> ProjectManifest:
     """Create and atomically promote the immutable initial public audit version."""
     project_id = validate_project_id(project_id)
@@ -988,6 +1047,7 @@ def create_project_audit(
             report_locale=report_locale,
             now=timestamp,
             project_metadata=public_project_metadata,
+            selected_topics=selected_topics,
         )
         report_name = f"{safe_client_stem}_AI_Search_SEO_Audit_{report_locale.upper()}_v1.pdf"
         _relocate_pdf(engine_root / "client-report.pdf", report_root / report_name)
@@ -1041,6 +1101,153 @@ def create_project_audit(
     except BaseException:
         store.discard_pending_project(pending)
         raise
+
+
+def refresh_project(
+    project_ref: str,
+    *,
+    clients_root: Path,
+    source_version: str,
+    expected_domain: str,
+    expected_client_name: str,
+    max_pages: int | None = None,
+    now: datetime | None = None,
+    crawler_transport: httpx.BaseTransport | None = None,
+    crawler_resolver: Resolver | None = None,
+    research_items: list[PublicResearchItem] | None = None,
+    rewrite_provider: RewriteProvider | None = None,
+    selected_topics: tuple[PromptTopic, ...] | None = None,
+) -> ProjectManifest:
+    """Append a linked public draft from fresh evidence, without owner or causal claims."""
+    if not isinstance(expected_client_name, str) or not expected_client_name.strip():
+        raise ProjectIdentityError("refresh requires an explicit expected client identity")
+    store = ProjectStore(clients_root)
+    project_path = store.resolve(project_ref)
+    project_id = project_path.name
+    manifest = store.load(project_id)
+    store.assert_identity(project_id, domain=expected_domain, client_name=expected_client_name)
+    source = next((v for v in manifest.versions if v.version_id == source_version), None)
+    if source is None:
+        raise ValueError(f"unknown source version {source_version!r} for {project_id!r}")
+    source_root = project_path / source.relative_path
+    aggregates = source_root / "aggregates"
+    source_snapshot = validate_project_bundle(
+        source_root,
+        expected_project_id=project_id,
+        expected_version_number=source.version_number,
+        expected_source_audit_id=source.source_audit_id,
+        expect_owner_context=(aggregates / "owner-context.json").is_file(),
+        expect_visibility_metrics=(aggregates / "visibility-metrics.json").is_file(),
+        expect_validation_comparison=(aggregates / "validation-comparison.json").is_file(),
+        expected_stage=source.stage,
+    )
+    source_run = AuditRun.model_validate_json(source_snapshot.files["engine/audit.json"].content)
+    if source_run.audit_id != source.audit_id:
+        raise ValueError("persisted source audit identity does not match project history")
+    source_report = ClientReportData.model_validate_json(
+        source_snapshot.files["engine/client-report-data.json"].content
+    )
+    if source_report.report_locale != manifest.report_locale:
+        raise ProjectIdentityError("source report locale does not match project identity")
+    config = AuditConfig(
+        domain=str(source_run.configuration["target"]),
+        max_pages=int(source_run.configuration["max_pages"]) if max_pages is None else max_pages,
+    )
+    canonical_domain = normalize_canonical_domain(expected_domain)
+    if (
+        normalize_canonical_domain(source_run.site.domain) != canonical_domain
+        or normalize_canonical_domain(config.domain) != canonical_domain
+    ):
+        raise ProjectIdentityError("source audit domain does not match expected project identity")
+    if saved_prompt_version(source_run) == SELECTED_PROMPT_PACK_VERSION:
+        validate_automatic_prompt_pack(source_run)
+        if selected_topics is None:
+            selected_topics = tuple(
+                PromptTopic.model_validate(item)
+                for item in source_run.configuration["prompt_topic_selection"]
+            )
+    timestamp = now or datetime.now(UTC)
+    safe_client_stem = _client_stem(manifest.client_name)
+
+    def build(pending: PendingVersion) -> AuditVersionRef:
+        version_root = pending.staging_path
+        engine_root = version_root / "engine"
+        report_root = version_root / "report"
+        for directory in (
+            engine_root,
+            report_root,
+            version_root / "manifests",
+            version_root / "aggregates",
+        ):
+            directory.mkdir(parents=True, exist_ok=False)
+        metadata = ProjectReportMetadata(
+            project_id=project_id,
+            version_id=pending.version_id,
+            version_number=pending.version_number,
+            stage=AuditStage.PUBLIC,
+            report_status=ReportStatus.PUBLIC_EVIDENCE_DRAFT,
+            source_audit_id=source.audit_id,
+        )
+        run = run_public_audit(
+            config.domain,
+            output_dir=engine_root,
+            max_pages=config.max_pages,
+            crawler_transport=crawler_transport,
+            crawler_resolver=crawler_resolver,
+            research_items=research_items,
+            rewrite_provider=rewrite_provider,
+            report_locale=manifest.report_locale,
+            now=timestamp,
+            project_metadata=metadata,
+            selected_topics=selected_topics,
+        )
+        run.configuration["source_audit_id"] = source.audit_id
+        report_name = (
+            f"{safe_client_stem}_AI_Search_SEO_Audit_"
+            f"{manifest.report_locale.upper()}_v{pending.version_number}.pdf"
+        )
+        _relocate_pdf(engine_root / "client-report.pdf", report_root / report_name)
+        run.output_paths = {
+            name: (f"report/{report_name}" if name == "client-report.pdf" else f"engine/{name}")
+            for name in sorted((*_ENGINE_ARTIFACTS, "client-report.pdf"))
+        }
+        _atomic_json(engine_root / "audit.json", run)
+        write_data_request(
+            build_data_request(
+                _data_request_context(run, project_id=project_id, locale=manifest.report_locale)
+            ),
+            version_root,
+        )
+        _write_manifests(
+            version_root=version_root,
+            project_id=project_id,
+            run=run,
+            config=config,
+            report_locale=manifest.report_locale,
+            source_audit_id=source.audit_id,
+            version_number=pending.version_number,
+        )
+        validated_snapshot = validate_project_bundle(
+            version_root,
+            expected_project_id=project_id,
+            expected_version_number=pending.version_number,
+            expected_source_audit_id=source.audit_id,
+            expected_stage=AuditStage.PUBLIC,
+        )
+        if _secure_bundle_walk(version_root) != validated_snapshot:
+            raise ValueError("version bundle changed after validation")
+        return AuditVersionRef(
+            version_id=pending.version_id,
+            version_number=pending.version_number,
+            stage=AuditStage.PUBLIC,
+            report_status=ReportStatus.PUBLIC_EVIDENCE_DRAFT,
+            audit_id=run.audit_id,
+            source_audit_id=source.audit_id,
+            created_at=pending.created_at,
+            relative_path=pending.relative_path,
+        )
+
+    return store.build_version(project_id, stage=AuditStage.PUBLIC, builder=build, now=timestamp)
 
 
 def _owner_context_evidence_id(fact_id: str, source_sha256: str) -> str:
@@ -1614,7 +1821,10 @@ def validate_project(
     intake_dir: Path | None,
     normalized_intake: NormalizedIntake | Mapping[str, object] | None,
     implementation_date: date,
+    baseline_diagnostic_run: str | None = None,
+    follow_up_diagnostic_run: str | None = None,
     now: datetime | None = None,
+    selected_topics: tuple[PromptTopic, ...] | None = None,
 ) -> ProjectManifest:
     """Run a fresh public audit and create an immutable validation version."""
     if (intake_dir is None) != (normalized_intake is None):
@@ -1634,6 +1844,18 @@ def validate_project(
         )
         follow_up_visibility = build_visibility_snapshot(processed)
 
+    supplementary = None
+    if (baseline_diagnostic_run is None) != (follow_up_diagnostic_run is None):
+        raise ValueError("baseline and follow-up diagnostic runs must be supplied together")
+    if baseline_diagnostic_run is not None and follow_up_diagnostic_run is not None:
+        from .diagnostic_workflow import compare_diagnostic_runs, parse_diagnostic_run_reference
+
+        supplementary = compare_diagnostic_runs(
+            project_ref,
+            clients_root=clients_root,
+            baseline_reference=parse_diagnostic_run_reference(baseline_diagnostic_run),
+            follow_up_reference=parse_diagnostic_run_reference(follow_up_diagnostic_run),
+        )
     store = ProjectStore(clients_root)
     project_path = store.resolve(project_ref)
     project_id = project_path.name
@@ -1677,6 +1899,14 @@ def validate_project(
     ):
         raise ProjectIdentityError("validation visibility intake identity mismatch")
 
+    if saved_prompt_version(source_run) == SELECTED_PROMPT_PACK_VERSION:
+        validate_automatic_prompt_pack(source_run)
+        if selected_topics is None:
+            selected_topics = tuple(
+                PromptTopic.model_validate(item)
+                for item in source_run.configuration["prompt_topic_selection"]
+            )
+
     config = AuditConfig(
         domain=str(source_run.configuration["target"]),
         max_pages=int(source_run.configuration["max_pages"]),
@@ -1701,6 +1931,7 @@ def validate_project(
             max_pages=config.max_pages,
             report_locale=manifest.report_locale,
             now=timestamp,
+            selected_topics=selected_topics,
         )
         comparison = compare_visibility(
             baseline_visibility,
@@ -1759,6 +1990,14 @@ def validate_project(
             "implementation_date": implementation_date.isoformat(),
             "validation_comparison_schema_version": comparison.schema_version,
         }
+        if supplementary is not None:
+            supplementary_file = (
+                version_root / "aggregates/supplementary-diagnostic-comparison.json"
+            )
+            _atomic_json(supplementary_file, supplementary)
+            run.configuration["supplementary_diagnostic_comparison_sha256"] = (
+                _secure_read_regular_file(supplementary_file).sha256
+            )
         report_status = (
             ReportStatus.CLIENT_CONTEXT_DRAFT
             if owner_context is None
@@ -1784,6 +2023,7 @@ def validate_project(
             owner_context=owner_context,
             visibility_snapshot=follow_up_visibility,
             validation_comparison=comparison,
+            supplementary_diagnostic_comparison=supplementary,
         )
         report_name = (
             f"{safe_client_stem}_AI_Search_SEO_Audit_"

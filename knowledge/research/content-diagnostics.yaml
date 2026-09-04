@@ -1,0 +1,25 @@
+# Primary foundations checked 2026-09-02. Google page updated 2025-12-10;
+# Microsoft page updated 2026-07-02. These are source publication dates, not rule expiry.
+# Sample limits, the 15-minute pairing window, and zero weights are audit policy,
+# not vendor requirements. Neither source specifies a public-search ranking rule.
+rules:
+  - rule_id: content-render-parity-001
+    vendor: google-search
+    statement: Google describes text accessibility and established SEO foundations for AI features. Comparing source-backed raw and rendered passages is an audit inference about the sampled representations, not a ranking rule or a prediction of AI citation. Possible accessibility impact is separate from observed quotation presence; sampling limits and zero scoring weight are local audit policy.
+    source_url: https://developers.google.com/search/docs/appearance/ai-features
+    source_type: official_vendor_documentation_with_audit_inference
+    evidence_level: B
+    verified_at: 2026-09-02
+    review_interval_days: 180
+    confidence: 0.85
+    scoring_weight: 0
+  - rule_id: content-section-context-001
+    vendor: microsoft-azure-search
+    statement: Microsoft describes content- and use-case-dependent segmentation for retrieval applications. Inspecting section structure and reviewing passage context is an audit inference supported by that implementation foundation, not a public-search ranking rule or a reproduction of vendor chunks. Semantic judgments remain agent assessments requiring evidence review; sampling limits and zero scoring weight are local audit policy.
+    source_url: https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-chunk-documents
+    source_type: official_vendor_documentation_with_audit_inference
+    evidence_level: B
+    verified_at: 2026-09-02
+    review_interval_days: 180
+    confidence: 0.8
+    scoring_weight: 0

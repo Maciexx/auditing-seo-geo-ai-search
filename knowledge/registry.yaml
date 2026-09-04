@@ -1,5 +1,5 @@
-version: "2026.08.11"
-verified_date: 2026-08-11
+version: "2026.09.04"
+verified_date: 2026-09-04
 files:
   - vendors/openai.yaml
   - vendors/google-search.yaml
@@ -11,5 +11,7 @@ files:
   - standards/sitemap.yaml
   - standards/schema-org.yaml
   - research/content-citability.yaml
+  - research/content-diagnostics.yaml
+  - research/performance.yaml
   - experimental/llms-txt.yaml
   - experimental/emerging-signals.yaml

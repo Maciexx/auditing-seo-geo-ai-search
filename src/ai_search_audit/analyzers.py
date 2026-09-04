@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from datetime import date
 from typing import Literal, TypedDict
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from .knowledge import KnowledgeRegistry, ResolvedKnowledgeRule
 from .models import (
@@ -629,9 +629,10 @@ def validate_findings_rules(
 _ENTITY_TYPE_PRIORITY = {
     "Hotel": 0,
     "LocalBusiness": 1,
-    "Organization": 2,
-    "OnlineStore": 3,
-    "WebSite": 4,
+    "OnlineStore": 2,
+    "OnlineBusiness": 3,
+    "Organization": 4,
+    "WebSite": 5,
 }
 _FACT_KEY_ALIASES = {
     "numberofrooms": "room_count",
@@ -663,12 +664,89 @@ def _supported_entity_type(value: object) -> str | None:
     return min(supported, key=_ENTITY_TYPE_PRIORITY.__getitem__) if supported else None
 
 
-def _entity_node_is_relevant(site: Site, node: dict[str, object]) -> bool:
-    references = [node.get("url"), node.get("@id")]
-    explicit_urls = [item for item in references if isinstance(item, str) and "://" in item]
-    if not explicit_urls:
+def _entity_domains(site: Site, pages: list[Page]) -> set[str]:
+    """Accept apex/www aliases only when an observed root redirect establishes them."""
+    domains = {site.domain}
+    for page in pages:
+        requested, final = urlsplit(str(page.url)), urlsplit(str(page.final_url))
+        if (
+            requested.hostname == site.domain
+            and requested.path in {"", "/"}
+            and page.status_code == 200
+            and final.hostname is not None
+            and final.hostname.removeprefix("www.") == site.domain.removeprefix("www.")
+        ):
+            domains.add(final.hostname)
+    return domains
+
+
+def _entity_node_is_relevant(domains: set[str], page: Page, node: dict[str, object]) -> bool:
+    raw_references = (node.get("url"), node.get("@id"))
+    if any(item is not None and not isinstance(item, str) for item in raw_references):
+        return False
+    references = [item for item in raw_references if isinstance(item, str) and item.strip()]
+    if not references:
         return True
-    return any(urlsplit(item).hostname == site.domain for item in explicit_urls)
+    reference_domains: set[str] = set()
+    for reference in references:
+        try:
+            scheme = urlsplit(reference).scheme
+            if scheme and scheme not in {"http", "https"}:
+                return False
+        except ValueError:
+            continue
+        resolved = _resolved_entity_reference(page, reference)
+        if resolved is not None:
+            hostname = urlsplit(resolved).hostname
+            if hostname is not None:
+                reference_domains.add(hostname)
+    return bool(reference_domains) and reference_domains.issubset(domains)
+
+
+def _resolved_entity_reference(page: Page, reference: object) -> str | None:
+    if not isinstance(reference, str) or not reference.strip():
+        return None
+    try:
+        original = urlsplit(reference)
+        if original.scheme and not original.hostname:
+            return None
+        resolved = urljoin(str(page.final_url), reference)
+        parsed = urlsplit(resolved)
+        _ = parsed.port
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        userinfo, separator, host_port = parsed.netloc.rpartition("@")
+        return parsed._replace(netloc=userinfo + separator + host_port.lower()).geturl()
+    except ValueError:
+        return None
+
+
+def _root_publisher_ids(site: Site, pages: list[Page]) -> set[str]:
+    publishers: set[str] = set()
+    domains = _entity_domains(site, pages)
+    for page in pages:
+        root = urlsplit(str(page.final_url))
+        if root.hostname not in domains or root.path not in {"", "/"}:
+            continue
+        for item in page.json_ld:
+            for node in _json_ld_nodes(item):
+                node_types = node.get("@type")
+                types = node_types if isinstance(node_types, list) else [node_types]
+                if "WebSite" not in types:
+                    continue
+                if not _entity_node_is_relevant(domains, page, node):
+                    continue
+                publisher = node.get("publisher")
+                reference = publisher.get("@id") if isinstance(publisher, dict) else publisher
+                resolved = _resolved_entity_reference(page, reference)
+                if resolved is not None and urlsplit(resolved).hostname in domains:
+                    publishers.add(resolved)
+    return publishers
+
+
+def _publisher_ids(site: Site, pages: list[Page]) -> set[str]:
+    publishers = _root_publisher_ids(site, pages)
+    return publishers if len(publishers) == 1 else set()
 
 
 def _normalize_fact_key(key: str) -> str:
@@ -676,6 +754,8 @@ def _normalize_fact_key(key: str) -> str:
 
 
 def _normalize_fact_value(key: str, value: object) -> str | None:
+    if key == "url" and not isinstance(value, str):
+        return None
     if isinstance(value, dict) and "value" in value:
         value = value["value"]
     if not isinstance(value, (str, int, float)):
@@ -690,9 +770,14 @@ def _normalize_fact_value(key: str, value: object) -> str | None:
         digits = re.sub(r"\D", "", text)
         return f"+{digits}" if text.startswith("+") and digits else digits or None
     if key == "url":
-        parts = urlsplit(text)
-        if parts.scheme and parts.netloc:
-            return f"{parts.scheme.casefold()}://{parts.netloc.casefold()}{parts.path.rstrip('/')}"
+        try:
+            parts = urlsplit(text)
+            if parts.scheme not in {"http", "https"} or not parts.hostname:
+                return None
+            _ = parts.port
+        except ValueError:
+            return None
+        return f"{parts.scheme.casefold()}://{parts.netloc.casefold()}{parts.path.rstrip('/')}"
     return text.casefold()
 
 
@@ -722,19 +807,21 @@ def _entity_facts(node: dict[str, object]) -> dict[str, list[str]]:
 
 
 def _root_page_identity(site: Site, pages: list[Page]) -> str | None:
+    expected_brand = site.brand or site.domain
+    expected = "".join(character for character in expected_brand.casefold() if character.isalnum())
     for page in pages:
         requested = urlsplit(str(page.url))
         if requested.hostname != site.domain or requested.path not in {"", "/"}:
             continue
         root_h1 = next((value.strip() for value in page.h1 if value.strip()), None)
-        if root_h1:
+        if (
+            root_h1
+            and "".join(character for character in root_h1.casefold() if character.isalnum())
+            == expected
+        ):
             return root_h1
         if page.title and page.title.strip():
             title = page.title.strip()
-            expected_brand = site.brand or site.domain
-            expected = "".join(
-                character for character in expected_brand.casefold() if character.isalnum()
-            )
             segments = re.split(r"\s*\|\s*|\s+[-–—]\s+", title)
             matching = [
                 segment.strip()
@@ -742,12 +829,14 @@ def _root_page_identity(site: Site, pages: list[Page]) -> str | None:
                 if "".join(character for character in segment.casefold() if character.isalnum())
                 == expected
             ]
-            return matching[-1] if matching else title
+            return matching[-1] if matching else None
     return None
 
 
 def select_canonical_entity(site: Site, pages: list[Page]) -> Entity:
     candidates: list[tuple[int, int, int, dict[str, object], str]] = []
+    publishers = _publisher_ids(site, pages)
+    domains = _entity_domains(site, pages)
     order = 0
     for page in pages:
         for item in page.json_ld:
@@ -756,9 +845,12 @@ def select_canonical_entity(site: Site, pages: list[Page]) -> Entity:
                 name = node.get("name")
                 if entity_type is None or not isinstance(name, str) or not name.strip():
                     continue
+                if not _entity_node_is_relevant(domains, page, node):
+                    continue
+                resolved_id = _resolved_entity_reference(page, node.get("@id"))
                 candidates.append(
                     (
-                        0 if _entity_node_is_relevant(site, node) else 1,
+                        0 if resolved_id in publishers else 1,
                         _ENTITY_TYPE_PRIORITY[entity_type],
                         order,
                         node,
@@ -766,7 +858,8 @@ def select_canonical_entity(site: Site, pages: list[Page]) -> Entity:
                     )
                 )
                 order += 1
-    if not candidates:
+    # Missing publishers allow type ranking; contradictory root publishers do not.
+    if not candidates or (not publishers and len(_root_publisher_ids(site, pages)) > 1):
         return Entity(
             brand=_root_page_identity(site, pages) or site.brand or site.domain,
             type="Organization",

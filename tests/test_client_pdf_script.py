@@ -1,13 +1,154 @@
+import base64
 import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
+from runpy import run_path
 
 import pytest
 from PIL import Image
 from pypdf import PdfReader
 
 ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    ["!!!", "/w==", "eA==" * 900, base64.b64encode(b"x" * 603).decode()],
+    ids=["malformed", "invalid-utf8", "invalid-padding", "invalid-json"],
+)
+def test_invalid_literal_paragraph_rejects_render(tmp_path, encoded):
+    _, source, _, _, command = render_edition(tmp_path, hero=False)
+    command += ["--observation-projection-version", "1.1.0"]
+    source.write_text("## Evidence\n\n<!-- audit-literal-v1:" + encoded + " -->\n")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "literal paragraph" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "text-bound",
+        "url-scheme",
+        "url-userinfo",
+        "url-control",
+        "dangling",
+        "bool-offset",
+        "outside",
+        "out-of-order",
+        "too-many-spans",
+        "too-many-urls",
+        "extra-field",
+    ],
+)
+def test_literal_paragraph_enforces_bounded_typed_citation_inventory(change):
+    value = {"text": "Example", "urls": ["https://studio.example/"], "citations": [[0, 7, 0]]}
+    if change == "text-bound":
+        value["text"] = "x" * 601
+    elif change.startswith("url-"):
+        value["urls"] = [
+            {
+                "url-scheme": "javascript:alert(1)",
+                "url-userinfo": "https://user@studio.example/",
+                "url-control": "https://studio.example/\n",
+            }[change]
+        ]
+    elif change == "dangling":
+        value["citations"] = [[0, 7, 1]]
+    elif change == "bool-offset":
+        value["citations"] = [[False, 7, 0]]
+    elif change == "outside":
+        value["citations"] = [[0, 8, 0]]
+    elif change == "out-of-order":
+        value["citations"] = [[0, 7, 0], [0, 1, 0]]
+    elif change == "too-many-spans":
+        value["citations"] = [[0, 7, 0]] * 201
+    elif change == "too-many-urls":
+        value["urls"] = [f"https://source-{n}.example/" for n in range(6)]
+    else:
+        value["extra"] = "untrusted"
+    encoded = base64.b64encode(json.dumps(value).encode()).decode()
+    render = run_path(str(ROOT / "scripts/render_client_pdf.py"))["literal_paragraph_markup"]
+    with pytest.raises(ValueError, match="literal paragraph"):
+        render("<!-- audit-literal-v1:" + encoded + " -->")
+
+
+def test_literal_marker_and_backslashes_are_inert_without_opt_in(tmp_path):
+    _, source, output, _, command = render_edition(tmp_path, hero=False)
+    source.write_text("## Evidence\n\n<!-- audit-literal-v1:!!! -->\n\nliteral \\u002a\n")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    text = " ".join(page.extract_text() for page in PdfReader(output).pages)
+    assert "audit-literal-v1:!!!" in text and r"literal \u002a" in text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("**may help, not guaranteed**", "<b>may help, not guaranteed</b>"),
+        ("`x**2 ** literal`", '<font name="Courier">x**2 ** literal</font>'),
+        ("`**literal**`", '<font name="Courier">**literal**</font>'),
+        (r"\**literal**", r"\**literal**"),
+        ("x**2 ** `", "x**2 ** `"),
+        ("<b>not HTML</b> @@TOKEN0@@", "&lt;b&gt;not HTML&lt;/b&gt; @@TOKEN0@@"),
+        ("[other](https://other.example/)", "[other](https://other.example/)"),
+    ],
+)
+def test_literal_typography_preserves_math_escaped_delimiters_and_code(text, expected):
+    render = run_path(str(ROOT / "scripts/render_client_pdf.py"))["literal_inline_text"]
+    assert render(text) == expected
+
+
+def test_measurement_binding_marker_is_inert_but_other_comments_remain_visible(tmp_path):
+    _, source, output, _, command = render_edition(tmp_path, hero=False)
+    digest = "abcdef0123456789" * 4
+    source.write_text(
+        "## Measurements\nBefore marker.\n"
+        f"<!-- audit-measurement:{digest} -->\nAfter marker.\n\n"
+        "<!-- ordinary-visible -->\n\n<!-- audit-measurement:malformed -->\n"
+    )
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    text = " ".join(page.extract_text() for page in PdfReader(output).pages)
+    assert digest not in text
+    assert "Before marker." in text and "After marker." in text
+    assert "ordinary-visible" in text and "audit-measurement:malformed" in text
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["nonbreaking_hyphen", "nbsp", "ordinary", "uppercase", "inline"],
+)
+def test_only_original_exact_measurement_marker_can_disappear_from_pdf(tmp_path, variant):
+    _, source, output, _, command = render_edition(tmp_path, hero=False)
+    canonical = "<!-- audit-measurement:" + "a" * 64 + " -->"
+    malformed = "<!-- audit-measurement:" + "b" * 64 + " -->"
+    malformed = {
+        "nonbreaking_hyphen": malformed.replace("audit-measurement", "audit\u2011measurement"),
+        "nbsp": malformed.replace("<!-- ", "<!--\u00a0"),
+        "ordinary": malformed.replace("audit-measurement", "ordinary-comment"),
+        "uppercase": malformed.replace("audit-measurement", "AUDIT-MEASUREMENT"),
+        "inline": "Visible prefix " + malformed + " visible suffix",
+    }[variant]
+    source.write_text(
+        "## Measurements\nBefore marker.\n"
+        + canonical
+        + "\nAfter marker.\n"
+        + malformed
+        + "\nAfter malformed marker.\n"
+    )
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    text = " ".join(page.extract_text() for page in PdfReader(output).pages)
+    text = " ".join(text.split())
+    assert "a" * 64 not in text
+    assert "b" * 64 in text
+    assert "Before marker." in text and "After marker." in text
+    assert "After malformed marker." in text
+    if variant == "inline":
+        assert "Visible prefix" in text and "visible suffix" in text
 
 
 def render_edition(tmp_path: Path, *, locale: str = "en", hero: bool = True):

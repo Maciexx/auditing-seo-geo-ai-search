@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -72,6 +73,63 @@ def test_finalization_binds_edition_to_audit_without_mutating_bundle(prepared):
     assert digest(destination / "delivery.json") == first
 
 
+def test_finalization_binds_explicit_diagnostic_run_without_changing_prior_edition(prepared):
+    from ai_search_audit.diagnostic_store import DiagnosticStore
+    from tests.test_diagnostic_workflow import _run
+
+    root, manifest, args = prepared
+    old = finalize(args)
+    before = {str(p.relative_to(root)): digest(p) for p in root.rglob("*") if p.is_file()}
+    path = _run(root)
+    loaded = DiagnosticStore(root).load("public-v1", path.name)
+    destination = finalize({**args, "diagnostic_run_ref": f"public-v1/{path.name}"})
+    record = json.loads((destination / "delivery.json").read_text())
+    assert record["diagnostic_run"] == {
+        "path": "diagnostics/public-v1/run-1",
+        "source_audit_id": manifest.latest_audit_id,
+        "manifest_sha256": loaded.manifest_sha256,
+        "content_sha256": digest(path / "diagnostics.json"),
+    }
+    assert record["report_status"] == "PUBLIC_EVIDENCE_DRAFT"
+    assert "diagnostic_run" not in json.loads((old / "delivery.json").read_text())
+    assert (old / "client-report.pdf").read_bytes() == (
+        destination / "client-report.pdf"
+    ).read_bytes()
+    assert all(digest(root / name) == sha for name, sha in before.items())
+
+
+@pytest.mark.parametrize(
+    "failure", ["tamper", "project", "source", "locale", "stale-pdf", "traversal", "missing"]
+)
+def test_invalid_selected_diagnostics_publish_nothing(prepared, failure):
+    from tests.test_diagnostic_workflow import _run
+
+    root, _, args = prepared
+    path = _run(root)
+    args["diagnostic_run_ref"] = "public-v1/run-1"
+    if failure in {"tamper", "project", "source", "locale"}:
+        target = path / "diagnostics.json"
+        value = json.loads(target.read_text())
+        if failure == "tamper":
+            value["algorithm_sha256"] = "0" * 64
+        else:
+            value["binding"][
+                {"project": "project_id", "source": "source_version", "locale": "report_locale"}[
+                    failure
+                ]
+            ] = {"project": "other", "source": "validation-v2", "locale": "pl"}[failure]
+        target.write_text(json.dumps(value))
+    elif failure == "stale-pdf":
+        args["reviewed_pdf_sha256"] = "0" * 64
+    elif failure == "traversal":
+        args["diagnostic_run_ref"] = "../other/public-v1/run-1"
+    else:
+        args["diagnostic_run_ref"] = "public-v1/run-99"
+    with pytest.raises((ValueError, FileNotFoundError)):
+        finalize(args)
+    assert not (root / "reports").exists()
+
+
 @pytest.mark.parametrize(
     "key,value",
     [
@@ -135,8 +193,9 @@ def test_output_symlink_is_rejected_without_writing_outside_project(prepared, tm
     assert not list(outside.iterdir())
 
 
-def test_cli_finalizes_explicit_project_version(prepared):
-    _, _, args = prepared
+@pytest.mark.parametrize("diagnostics", [False, True])
+def test_cli_finalizes_explicit_project_version(prepared, diagnostics):
+    project, _, args = prepared
     command = [
         sys.executable,
         "-m",
@@ -159,6 +218,11 @@ def test_cli_finalizes_explicit_project_version(prepared):
         "--reviewed-pdf-sha256",
         args["reviewed_pdf_sha256"],
     ]
+    if diagnostics:
+        from tests.test_diagnostic_workflow import _run
+
+        _run(project)
+        command.extend(["--diagnostic-run", "public-v1/run-1"])
     root = Path(__file__).parents[1]
     result = subprocess.run(
         command,
@@ -170,6 +234,72 @@ def test_cli_finalizes_explicit_project_version(prepared):
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()).name == "client-report.pdf"
     assert Path(result.stdout.strip()).is_file()
+    record = json.loads(Path(result.stdout.strip()).with_name("delivery.json").read_text())
+    assert ("diagnostic_run" in record) is diagnostics
+
+
+@pytest.mark.parametrize("target", ["clients", "manifest"])
+def test_diagnostic_finalizer_rejects_symlink_before_project_reads(
+    prepared, tmp_path, monkeypatch, target
+):
+    import ai_search_audit.client_delivery as delivery
+
+    root, _, args = prepared
+    link = root.parent
+    if target == "clients":
+        link = tmp_path / "linked"
+        link.symlink_to(root.parent, target_is_directory=True)
+    else:
+        (root / "project.json").rename(root / "saved-project.json")
+        (root / "project.json").symlink_to(root / "saved-project.json")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("symlink must be rejected before reading project manifest")
+
+    monkeypatch.setattr(delivery.ProjectStore, "load", forbidden)
+    with pytest.raises(ValueError, match="real directory|regular file"):
+        finalize({**args, "clients_root": link, "diagnostic_run_ref": "public-v1/run-1"})
+
+
+def test_diagnostic_run_for_another_real_source_version_is_rejected(prepared, tmp_path):
+    from ai_search_audit.project_orchestrator import update_project_context
+    from tests.test_diagnostic_workflow import _run
+
+    root, _, args = prepared
+    _run(root)
+    owned, payload = _owner_intake(tmp_path, entity="Example Studio")
+    manifest = update_project_context(
+        "project:example",
+        clients_root=root.parent,
+        intake_dir=owned,
+        normalized_intake=payload,
+        now=NOW,
+    )
+    with pytest.raises(ValueError, match="diagnostic run does not match selected client edition"):
+        finalize(
+            {
+                **args,
+                "version_id": manifest.versions[-1].version_id,
+                "diagnostic_run_ref": "public-v1/run-1",
+            }
+        )
+    assert not (root / "reports").exists()
+
+
+@pytest.mark.parametrize("locale", ["en", "pl"])
+def test_finalizer_rejects_intact_run_copied_from_other_project(prepared, tmp_path, locale):
+    from tests.test_diagnostic_workflow import _run
+
+    root, _, args = prepared
+    _create(tmp_path, domain="https://other.example", project_id="other", report_locale=locale)
+    other = tmp_path / "clients/other"
+    original = _run(other)
+    copied = root / "diagnostics/public-v1/run-1"
+    copied.parent.mkdir(parents=True)
+    shutil.copytree(original, copied)
+    with pytest.raises(ValueError):
+        finalize({**args, "diagnostic_run_ref": "public-v1/run-1"})
+    assert not (root / "reports").exists()
 
 
 def test_pdf_content_tampering_is_rejected_even_if_review_hash_is_updated(prepared):

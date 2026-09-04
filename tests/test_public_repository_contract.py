@@ -1,3 +1,4 @@
+import ast
 import re
 import subprocess
 import sys
@@ -80,8 +81,78 @@ def _is_explicit_placeholder(value: bytes) -> bool:
     )
 
 
+def _python_binding_values(payload: bytes, *, location: str) -> dict[int, ast.expr | None]:
+    """Map real Python binding positions, never text inside strings or comments."""
+    if not location.endswith(".py"):
+        return {}
+    try:
+        tree = ast.parse(payload.decode("utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return {}
+
+    line_offsets = [0]
+    for line in payload.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+    bindings: dict[int, ast.expr | None] = {}
+
+    def bind(node: ast.Name | ast.arg | ast.keyword, value: ast.expr | None) -> None:
+        bindings[line_offsets[node.lineno - 1] + node.col_offset] = value
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg is not None:
+            bind(node, node.value)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bind(target, node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            bind(node.target, node.value)
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    continue
+                start = line_offsets[key.lineno - 1] + key.col_offset
+                end = line_offsets[key.end_lineno - 1] + key.end_col_offset
+                # Match the source spelling, including header prefixes, but only
+                # map positions inside an actual dictionary key's source span.
+                key_source = payload[start:end] + b": binding"
+                for match in SECRET_ASSIGNMENT_PATTERN.finditer(key_source):
+                    if match.start(1) >= end - start:
+                        bindings[start + match.start()] = value
+        elif isinstance(node, ast.arguments):
+            positional = node.posonlyargs + node.args
+            defaults = [None] * (len(positional) - len(node.defaults)) + list(node.defaults)
+            for argument, default in zip(positional, defaults, strict=True):
+                bind(argument, default)
+            for argument, default in zip(node.kwonlyargs, node.kw_defaults, strict=True):
+                bind(argument, default)
+            for argument in (node.vararg, node.kwarg):
+                if argument is not None:
+                    bind(argument, None)
+    return bindings
+
+
+def _contains_credential_literal(value: ast.AST | None) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes)):
+        literal = value.value.encode() if isinstance(value.value, str) else value.value
+        return bool(literal) and not _is_explicit_placeholder(literal)
+    if isinstance(value, ast.Constant):
+        return value.value is not None
+    if isinstance(value, ast.Subscript):
+        # A mapping's lookup key identifies the credential; it is not its value.
+        return _contains_credential_literal(value.value)
+    return any(_contains_credential_literal(child) for child in ast.iter_child_nodes(value))
+
+
 def _assert_no_secrets(payload: bytes, *, location: str) -> None:
+    bindings = _python_binding_values(payload, location=location)
     for match in SECRET_ASSIGNMENT_PATTERN.finditer(payload):
+        if match.start() in bindings:
+            if not _contains_credential_literal(bindings[match.start()]):
+                continue
+            raise AssertionError(f"credential assignment in {location}")
         if not _is_explicit_placeholder(match.group(1)):
             raise AssertionError(f"credential assignment in {location}")
     for match in BEARER_TOKEN_PATTERN.finditer(payload):
@@ -159,6 +230,86 @@ def test_release_secret_guard_rejects_whitespace_structured_and_platform_tokens(
 )
 def test_release_secret_guard_allows_explicit_placeholders(payload: bytes) -> None:
     assert_release_archive_boundary(["ai_search_audit/example.txt"], [payload])
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "def send(*, {key}: SecretStr | None): pass",
+        "{key}: SecretStr | None",
+        "{key} = credential",
+        "send({key}=credential)",
+        'send({key}=keys["pagespeed_insights"])',
+        "send({key}=SecretStr(KEY))",
+        "send({key}=None if key is None else SecretStr(key))",
+        "send({key}=ForbiddenCredential())",
+        'headers = {{"X-Goog-{key}": credential}}',
+        'data = {{"{key}": KEY}}',
+        'label = "zażółć"; send({key}=credential)',
+        "send(\n    {key}=credential\n)",
+        'send({key}=SecretStr("example-token-placeholder"))',
+    ),
+)
+def test_release_secret_guard_allows_python_annotations_and_forwarding(statement: str) -> None:
+    payload = statement.format(key="api" + "_key").encode()
+    _assert_no_secrets(payload, location="wheel file: ai_search_audit/example.py")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        '{key} = "live-secret-value"',
+        'send({key}=SecretStr("live-secret-value"))',
+        'send({key}=f"live-secret-{suffix}")',
+        'def send({key}: SecretStr = "live-secret-value"): pass',
+        '{key}: SecretStr = "live-secret-value"',
+        "# {key}=live-secret-value",
+        'message = "{key}=live-secret-value"',
+        'message = f"{key}=live-secret-{suffix}"',
+        'data = {{"{key}": "live-secret-value"}}',
+        'headers = {{"X-Goog-{key}": "live-secret-value"}}',
+        'data = {{"{key}=live-secret-value": credential}}',
+        "{key} = 299",
+        "send({key}=SecretStr(299))",
+    ),
+)
+def test_release_secret_guard_rejects_python_literals_comments_and_strings(statement: str) -> None:
+    payload = statement.format(key="api" + "_key", suffix="{suffix}").encode()
+    with pytest.raises(AssertionError, match="credential"):
+        _assert_no_secrets(payload, location="wheel file: ai_search_audit/example.py")
+
+
+@pytest.mark.parametrize("location", ("settings.env", "settings.json", "settings.yaml"))
+@pytest.mark.parametrize("value", ("credential", "SecretStr", '"live-secret-value"'))
+def test_release_secret_guard_does_not_treat_configuration_as_python(
+    location: str, value: str
+) -> None:
+    payload = ("api" + "_key=" + value).encode()
+    with pytest.raises(AssertionError, match="credential"):
+        _assert_no_secrets(payload, location=location)
+
+
+def test_release_secret_guard_fails_closed_for_invalid_python() -> None:
+    payload = ("def invalid(:\n    api" + "_key=credential").encode()
+    with pytest.raises(AssertionError, match="credential"):
+        _assert_no_secrets(payload, location="example.py")
+
+
+@pytest.mark.parametrize(
+    "token",
+    (
+        b"Authorization: Bearer " + b"liveBearerToken1234567890",
+        b"AI" + b"za12345678901234567890123456789012345",
+        b"gh" + b"p_123456789012345678901234567890123456",
+        b"sk-" + b"proj-123456789012345678901234567890",
+        b"AK" + b"IA1234567890123456",
+        b"xox" + b"b-12345678901234567890",
+    ),
+)
+def test_release_secret_guard_keeps_global_token_checks_for_valid_python(token: bytes) -> None:
+    payload = b"send(api" + b"_key=credential)\n# " + token
+    with pytest.raises(AssertionError, match="token"):
+        _assert_no_secrets(payload, location="example.py")
 
 
 def test_tracked_files_exclude_real_client_identifiers_and_secret_assignments() -> None:

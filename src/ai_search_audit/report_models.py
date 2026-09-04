@@ -5,7 +5,15 @@ import json
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .comparisons import (
     ComparisonBasis,
@@ -20,6 +28,12 @@ from .data_intake import (
     SourceArtifactProvenance,
     VisibilityMetricPoint,
     VisibilitySource,
+)
+from .diagnostic_models import (
+    BenchmarkComparison,
+    DiagnosticBinding,
+    DiagnosticCollectionRange,
+    DiagnosticRunReference,
 )
 from .models import (
     ClaimModality,
@@ -223,10 +237,11 @@ class ProjectReportMetadata(FrozenReportModel):
         }[self.stage]
         if self.report_status not in allowed:
             raise ValueError("project report status does not match the trusted audit stage")
-        if self.stage is AuditStage.PUBLIC and self.source_audit_id is not None:
-            raise ValueError("public project report must not reference a source audit")
-        if self.stage is not AuditStage.PUBLIC and self.source_audit_id is None:
-            raise ValueError("context project report requires a source audit")
+        initial_public = self.stage is AuditStage.PUBLIC and self.version_number == 1
+        if initial_public and self.source_audit_id is not None:
+            raise ValueError("public-v1 project report must not reference a source audit")
+        if not initial_public and self.source_audit_id is None:
+            raise ValueError("subsequent project report requires a source audit")
         return self
 
 
@@ -566,11 +581,47 @@ class ValidationComparisonReportSection(FrozenReportModel):
         return self
 
 
+class SupplementaryDiagnosticComparison(FrozenReportModel):
+    """Validated run provenance and numeric observations, not fresh-crawl findings."""
+
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    baseline_reference: DiagnosticRunReference
+    follow_up_reference: DiagnosticRunReference
+    baseline_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    follow_up_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    baseline_binding: DiagnosticBinding
+    follow_up_binding: DiagnosticBinding
+    baseline_collection_range: DiagnosticCollectionRange
+    follow_up_collection_range: DiagnosticCollectionRange
+    comparison: BenchmarkComparison
+
+    @model_validator(mode="after")
+    def validate_bindings(self) -> SupplementaryDiagnosticComparison:
+        for reference, binding in (
+            (self.baseline_reference, self.baseline_binding),
+            (self.follow_up_reference, self.follow_up_binding),
+        ):
+            if reference.source_version != binding.source_version:
+                raise ValueError("supplementary diagnostic source reference mismatch")
+        if (
+            self.baseline_binding.project_id,
+            self.baseline_binding.domain,
+            self.baseline_binding.report_locale,
+        ) != (
+            self.follow_up_binding.project_id,
+            self.follow_up_binding.domain,
+            self.follow_up_binding.report_locale,
+        ):
+            raise ValueError("supplementary diagnostic project/domain/locale mismatch")
+        return self
+
+
 def report_context_digest(
     project: ProjectReportMetadata,
     owner_context: OwnerContextReportSection | None,
     measurement: MeasurementReportSection | None,
     validation_comparison: ValidationComparisonReportSection | None = None,
+    supplementary_diagnostic_comparison: SupplementaryDiagnosticComparison | None = None,
 ) -> str:
     payload = {
         "project": project.model_dump(mode="json"),
@@ -580,6 +631,10 @@ def report_context_digest(
             None if validation_comparison is None else validation_comparison.model_dump(mode="json")
         ),
     }
+    if supplementary_diagnostic_comparison is not None:
+        payload["supplementary_diagnostic_comparison"] = (
+            supplementary_diagnostic_comparison.model_dump(mode="json")
+        )
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -614,9 +669,19 @@ class ClientReportData(FrozenReportModel):
     owner_context: OwnerContextReportSection | None = None
     measurement: MeasurementReportSection | None = None
     validation_comparison: ValidationComparisonReportSection | None = None
+    supplementary_diagnostic_comparison: SupplementaryDiagnosticComparison | None = None
     context_digest: str | None = Field(default=None, min_length=64, max_length=64)
     anti_slop: AntiSlopReportMetadata
     renderer: RendererMetadata
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy_compatible(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        payload: dict[str, object] = handler(self)
+        if self.supplementary_diagnostic_comparison is None:
+            payload.pop("supplementary_diagnostic_comparison", None)
+        return payload
 
     @field_validator("audit_timestamp")
     @classmethod
@@ -635,6 +700,7 @@ class ClientReportData(FrozenReportModel):
                 self.owner_context is not None
                 or self.measurement is not None
                 or self.validation_comparison is not None
+                or self.supplementary_diagnostic_comparison is not None
             ):
                 raise ValueError("report context requires project metadata")
             if self.context_digest is not None:
@@ -683,11 +749,21 @@ class ClientReportData(FrozenReportModel):
                 )
         elif self.validation_comparison is not None:
             raise ValueError("non-validation report must not contain a validation comparison")
+        if self.supplementary_diagnostic_comparison is not None:
+            binding = self.supplementary_diagnostic_comparison.baseline_binding
+            if (
+                self.project.stage is not AuditStage.VALIDATION
+                or binding.project_id != self.project.project_id
+                or binding.domain != self.target_domain
+                or binding.report_locale != self.report_locale
+            ):
+                raise ValueError("supplementary diagnostic report identity mismatch")
         expected = report_context_digest(
             self.project,
             self.owner_context,
             self.measurement,
             self.validation_comparison,
+            self.supplementary_diagnostic_comparison,
         )
         if self.context_digest != expected:
             raise ValueError("report context digest does not match canonical sections")

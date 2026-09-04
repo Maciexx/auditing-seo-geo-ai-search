@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .comparisons import ValidationComparison
 from .models import (
@@ -46,6 +46,7 @@ from .report_models import (
     ReportSourceProvenance,
     ReportVisibilityMetric,
     ReportVisibilityPoint,
+    SupplementaryDiagnosticComparison,
     ValidationComparisonReportSection,
     report_context_digest,
     validate_report_compatibility,
@@ -384,6 +385,24 @@ def _apply_narrative_payload(draft: ReportDraft, payload: NarrativeRewritePayloa
     return rewritten
 
 
+def _validate_narrative_payload(payload: NarrativeRewritePayload) -> NarrativeRewritePayload:
+    """Revalidate callback data without silently dropping unchecked or subclass fields.
+
+    This enforces the narrative-only schema, not the provenance or truth of free text.
+    """
+    data = {**vars(payload), **(payload.model_extra or {})}
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        data["findings"] = [
+            {**vars(item), **(item.model_extra or {})} if isinstance(item, BaseModel) else item
+            for item in findings
+        ]
+    try:
+        return NarrativeRewritePayload.model_validate(data, strict=True)
+    except ValidationError:
+        raise ClaimGuardError("Anti-Slop returned an invalid narrative payload") from None
+
+
 def _deterministic_anti_slop(payload: NarrativeRewritePayload) -> NarrativeRewritePayload:
     cleaned = payload.model_copy(deep=True)
     text = cleaned.executive_summary
@@ -407,6 +426,7 @@ def apply_anti_slop(
             rewritten_payload = provider(payload.model_copy(deep=True))
             if not isinstance(rewritten_payload, NarrativeRewritePayload):
                 raise ClaimGuardError("Anti-Slop returned an invalid narrative payload")
+            rewritten_payload = _validate_narrative_payload(rewritten_payload)
             rewritten = _apply_narrative_payload(draft, rewritten_payload)
             claim_guard(rewritten, manifest)
             evidence_validator(rewritten)
@@ -642,6 +662,7 @@ def validate_client_report_context(
     owner_context: OwnerContext | None,
     visibility_snapshot: VisibilitySnapshot | None,
     validation_comparison: ValidationComparison | None = None,
+    supplementary_diagnostic_comparison: SupplementaryDiagnosticComparison | None = None,
 ) -> None:
     _validate_trusted_report_status(project_metadata, owner_context)
     expected_owner = (
@@ -667,6 +688,10 @@ def validate_client_report_context(
     )
     if report.validation_comparison != expected_comparison:
         raise ValueError("client report validation comparison does not match canonical data")
+    if report.supplementary_diagnostic_comparison != supplementary_diagnostic_comparison:
+        raise ValueError(
+            "client report supplementary diagnostic comparison does not match canonical data"
+        )
 
 
 def build_client_report_data(
@@ -679,6 +704,7 @@ def build_client_report_data(
     owner_context: OwnerContext | None = None,
     visibility_snapshot: VisibilitySnapshot | None = None,
     validation_comparison: ValidationComparison | None = None,
+    supplementary_diagnostic_comparison: SupplementaryDiagnosticComparison | None = None,
 ) -> ClientReportData:
     final_draft = rewrite.draft
     validate_report_compatibility(
@@ -773,6 +799,7 @@ def build_client_report_data(
         owner_context=report_owner_context,
         measurement=report_measurement,
         validation_comparison=report_validation_comparison,
+        supplementary_diagnostic_comparison=supplementary_diagnostic_comparison,
         context_digest=(
             None
             if project_metadata is None
@@ -781,6 +808,7 @@ def build_client_report_data(
                 report_owner_context,
                 report_measurement,
                 report_validation_comparison,
+                supplementary_diagnostic_comparison,
             )
         ),
         anti_slop=AntiSlopReportMetadata(

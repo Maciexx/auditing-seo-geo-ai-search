@@ -101,6 +101,28 @@ that a change was observed after the work; chronology does not establish causati
 development, the stable public checkout remains untouched. Store private client projects outside
 all code checkouts.
 
+### Supplementary content diagnostics and AI observations
+
+After saving the canonical public audit, attempt bounded supplementary diagnostics on the
+homepage and important audited pages. Use `project diagnose` with the explicit project and
+source version. Before collecting or normalizing input, read
+[collection and review instructions](references/content-diagnostics.md), including the validated
+capture examples. Use a real available browser; never simulate a missing browser or AI product.
+Record actual collection conditions and keep UNKNOWN/UNAVAILABLE distinct from a measured
+failure or zero mentions. Missing supplementary access does not prevent the public audit.
+
+Use `project benchmark-prepare` to preserve the exact prompt set. Record actual responses,
+citations and setup, and compare only compatible observations. Unknown models prevent a
+controlled numeric delta; API and consumer interfaces are different series. Source-bound
+section reviews remain agent assessments, not citation predictions. Basic Content Citability
+is a structural checklist, not a probability of citation; supplementary heuristics have zero
+scoring weight and do not alter historical readiness scores.
+
+Keep diagnostic runs separate from the canonical audit. Include only material reviewed examples
+in existing client content, technical or AI benchmark sections, then finalize with the explicit
+`--diagnostic-run <source-version/run-N>`. Preserve the cover, layout, claim protections and
+complete visual QA. Do not add a mandatory diagnostic chapter or deliver the technical PDF.
+
 ## Evidence model
 
 Use these labels in working notes and expose them wherever uncertainty affects a finding.

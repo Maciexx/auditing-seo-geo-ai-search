@@ -1,0 +1,13 @@
+**
+!src/
+!src/ai_search_audit/
+!src/ai_search_audit/lighthouse_network.py
+!src/ai_search_audit/lighthouse_proxy.py
+!src/ai_search_audit/lighthouse_assets/
+!src/ai_search_audit/lighthouse_assets/Dockerfile
+!src/ai_search_audit/lighthouse_assets/package.json
+!src/ai_search_audit/lighthouse_assets/package-lock.json
+!src/ai_search_audit/lighthouse_assets/runner.mjs
+!src/ai_search_audit/lighthouse_assets/isolation.py
+!src/ai_search_audit/lighthouse_assets/sidecar.py
+!src/ai_search_audit/lighthouse_assets/LICENSE.moby

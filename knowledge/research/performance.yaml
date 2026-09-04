@@ -1,0 +1,23 @@
+# Thresholds verified against official documentation on 2026-09-04.
+# Diagnostic next steps and zero readiness weights are audit implementation policy.
+rules:
+  - rule_id: performance-psi-score-001
+    vendor: google
+    statement: PageSpeed Insights classifies performance scores of 90 or above as good, 50 through 89 as needing improvement, and below 50 as poor. A laboratory score describes that test, not AI visibility, citation probability, a sitewide finding, or a guaranteed ranking effect. Reviewing the underlying diagnostics is an implementation decision, not an established cause.
+    source_url: https://developers.google.com/speed/docs/insights/v5/about
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-09-04
+    review_interval_days: 180
+    confidence: 0.95
+    scoring_weight: 0
+  - rule_id: performance-lcp-thresholds-001
+    vendor: google
+    statement: Largest Contentful Paint measures when the largest visible content element renders. LCP of at most 2500 ms is good, above 2500 through 4000 ms needs improvement, and above 4000 ms is poor. Real-user assessment uses the 75th percentile. Comparing a single lab result with these reference thresholds does not establish real-user Core Web Vitals or a sitewide outcome. Investigating observed delay is an implementation decision; the duration alone does not identify images, server response, or another root cause and does not guarantee ranking effects.
+    source_url: https://web.dev/articles/lcp
+    source_type: official_vendor_documentation
+    evidence_level: A
+    verified_at: 2026-09-04
+    review_interval_days: 180
+    confidence: 0.95
+    scoring_weight: 0

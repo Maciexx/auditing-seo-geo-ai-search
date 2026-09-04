@@ -125,7 +125,7 @@ def test_canonical_entity_fallback_never_uses_a_secondary_page_h1() -> None:
 
     entity = select_canonical_entity(site, [login, root])
 
-    assert entity.brand == "Example official website"
+    assert entity.brand == "Example"
     assert entity.type == "Organization"
 
 

@@ -1,8 +1,133 @@
+import json
+import re
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_documented_conditional_rationale_preflights_without_weakening_guard():
+    reference = (ROOT / "references/content-diagnostics.md").read_text()
+    snippet = re.search(
+        r"<!-- example: conditional-review -->\s*```python\n(.*?)\n```", reference, re.S
+    )
+    assert snippet is not None
+    namespace = {}
+    exec(compile(snippet[1], str(ROOT / "references/content-diagnostics.md"), "exec"), namespace)
+    assert namespace["validated"].assessment_kind == "agent_assessment"
+    assert namespace["validated"].review.quotes == ("Support may be available after confirmation.",)
+    assert "may" in namespace["validated"].review.rationale
+    assert "stdin=subprocess.PIPE" in reference
+    assert "worksheet.prompts[j].text" in reference
+
+
+def test_documented_diagnostic_json_and_pl_en_normalizer_execute_against_real_schemas():
+    from ai_search_audit import diagnostic_models as models
+    from ai_search_audit.benchmark import prepare_benchmark_worksheet
+    from ai_search_audit.content_diagnostics import capture_html, compare_captures
+    from ai_search_audit.models import DataState
+
+    reference = (ROOT / "references/content-diagnostics.md").read_text()
+    examples = re.findall(r"<!-- schema: (\w+) -->\s*```json\n(.*?)\n```", reference, re.S)
+    assert len(examples) == 6
+    snapshots = []
+    for name, encoded in examples:
+        result = getattr(models, name).model_validate_json(encoded)
+        if name == "CaptureInput":
+            snapshots.append(result)
+    snippet = re.search(
+        r"<!-- example: normalize-review -->\s*```python\n(.*?)\n```", reference, re.S
+    )
+    assert snippet is not None
+    namespace = {}
+    exec(compile(snippet[1], str(ROOT / "references/content-diagnostics.md"), "exec"), namespace)
+    for snapshot in snapshots:
+        source = models.DiagnosticSource(
+            binding=models.DiagnosticBinding(
+                project_id="example",
+                source_version="public-v1",
+                audit_id="audit-example",
+                report_locale=snapshot.locale,
+                domain=snapshot.url.split("/")[2],
+                source_sha256="a" * 64,
+            ),
+            prompts=(
+                models.FrozenPrompt(
+                    prompt_id="p1",
+                    pack_version="1.0.0",
+                    locale=snapshot.locale,
+                    intent="discovery",
+                    text="Przykładowe pytanie?" if snapshot.locale == "pl" else "Example question?",
+                ),
+            ),
+            page_urls=(snapshot.url,),
+            canonical_domains=(snapshot.url.split("/")[2],),
+        )
+        contract = models.DiagnosticContract(
+            source=source,
+            worksheet=prepare_benchmark_worksheet(source),
+            selected_pages=(
+                models.DiagnosticSelectedPage(url=snapshot.url, reason="Synthetic example"),
+            ),
+            session_key="anonymous-fresh",
+            instructions=(),
+        )
+        quote = (
+            "Realizacja może potrwać 2 dni. Termin nie jest gwarantowany."
+            if snapshot.locale == "pl"
+            else "Delivery may take 2 days. Arrival is not guaranteed."
+        )
+        rationale = (
+            "Doprecyzuj, od którego zdarzenia liczy się termin."
+            if snapshot.locale == "pl"
+            else "Clarify when the delivery period begins."
+        )
+        intake = namespace["normalize_review"](
+            contract.model_dump(mode="json"),
+            snapshot.model_dump(mode="json"),
+            quote=quote,
+            rationale=rationale,
+        )
+        assert models.DiagnosticIntake.model_validate_json(intake.model_dump_json()) == intake
+        assert intake.section_reviews[0].reviews[0].quotes == (quote,)
+        assert intake.rendered_captures[0].viewport == (1280, 800)
+        assert intake.rendered_captures[0].session_key is None
+        rendered = capture_html(**snapshot.model_dump(exclude={"account_state"}))
+        raw_fields = snapshot.model_dump(exclude={"account_state"})
+        raw_fields.update(kind="raw", session_key="anonymous-fresh", consent_state="none")
+        raw = capture_html(**raw_fields)
+        assert compare_captures(raw, rendered).state is DataState.UNKNOWN
+        assert json.loads(intake.model_dump_json())[
+            "expected_binding"
+        ] == contract.source.binding.model_dump(mode="json")
+
+
+def test_supplementary_workflow_is_routed_and_separate_from_canonical_audit():
+    text = (ROOT / "SKILL.md").read_text()
+    assert "references/content-diagnostics.md" in text
+    assert "After saving the canonical public audit" in text
+    assert "UNKNOWN/UNAVAILABLE" in text
+    assert "diagnostic-run" in text
+    reference = (ROOT / "references/content-diagnostics.md").read_text()
+    for required in (
+        "OWNED_INTAKE_DIR",
+        "DIAGNOSTIC_CONTRACT",
+        "normalized-intake.json",
+        "READY",
+        "benchmark-prepare",
+        "--source-version",
+        "--diagnostic-run",
+        "2 MiB",
+        "fifteen minutes",
+        "twenty",
+        "2,000",
+        "unknown",
+        "consumer_ui",
+    ):
+        assert required in reference
+    assert "docs/superpowers" not in reference
+    assert "--diagnostic-run" in (ROOT / "references/client-pdf-spec.md").read_text()
 
 
 def test_skill_defines_complete_audit_workflow_contract() -> None:
@@ -137,4 +262,4 @@ def test_release_version_is_updated_consistently():
     from ai_search_audit import __version__
 
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert __version__ == project["project"]["version"] == "0.2.0"
+    assert __version__ == project["project"]["version"] == "0.3.0"

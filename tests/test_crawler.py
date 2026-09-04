@@ -1,4 +1,4 @@
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -12,7 +12,7 @@ from ai_search_audit.crawler import (
     validate_public_url,
 )
 from ai_search_audit.knowledge import load_registry
-from ai_search_audit.models import SitemapState
+from ai_search_audit.models import DataState, SitemapState
 
 ROOT = Path(__file__).parents[1]
 PRODUCTS = load_registry(ROOT / "knowledge").crawler_products
@@ -20,6 +20,555 @@ PRODUCTS = load_registry(ROOT / "knowledge").crawler_products
 
 def public_resolver(_hostname: str) -> list[str]:
     return ["8.8.8.8"]
+
+
+def test_capture_page_is_fresh_bounded_and_does_not_traverse():
+    requests = []
+    body = '<html lang="pl"><main><h1>Studio</h1><a href="/next">Next</a></main><script src="https://other.example/x.js"></script></html>'
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+    config = AuditConfig(domain="studio.example", user_agent="public-audit-test/7")
+    before = datetime.now(UTC)
+    result = NativeCrawler(
+        config, PRODUCTS, transport=httpx.MockTransport(handler), resolver=public_resolver
+    ).capture_page("https://studio.example/service")
+    after = datetime.now(UTC)
+    assert result.state is DataState.AVAILABLE
+    assert result.html == body
+    assert result.body == body.encode()
+    assert result.url == result.final_url == "https://studio.example/service"
+    assert before <= result.observed_at <= after
+    assert result.collector == f"native-crawler/{NativeCrawler.version}"
+    assert result.status_code == 200 and result.complete and not result.truncated
+    assert len(requests) == 1
+    assert requests[0].headers["user-agent"] == config.user_agent
+    assert requests[0].extensions["timeout"]["read"] == config.timeout_seconds
+    assert "cookie" not in requests[0].headers and "authorization" not in requests[0].headers
+    assert "session_key" not in result.model_dump() and "viewport" not in result.model_dump()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://localhost/",
+        "http://127.0.0.1/",
+        "http://10.0.0.1/",
+        "http://169.254.169.254/",
+        "http://192.0.2.1/",
+        "http://[::1]/",
+        "https://user:secret@studio.example/",
+        "https://@studio.example/",
+        "https://:@studio.example/",
+        "https://unrelated.example/",
+        "file:///tmp/page.html",
+    ],
+)
+def test_capture_page_blocks_unsafe_or_out_of_scope_initial_targets(target):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text="<main>Content</main>")
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page(target)
+    assert result.state is DataState.FAILED
+    assert result.html is None and not result.complete
+    assert result.limitations and requests == []
+    assert "secret" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://localhost/",
+        "http://127.0.0.1/",
+        "http://10.0.0.1/",
+        "http://169.254.169.254/",
+        "http://192.0.2.1/",
+        "https://unrelated.example/",
+        "https://user:secret@studio.example/",
+        "https://@studio.example/",
+        "https://:@studio.example/",
+    ],
+)
+def test_capture_page_preserves_redirect_guards(target):
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(302, headers={"location": target})
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED
+    assert requests == ["https://studio.example/"]
+    assert "secret" not in result.model_dump_json()
+
+
+def test_capture_page_allows_canonical_www_https_redirect_and_records_actual_final_url():
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        if request.url.scheme == "http":
+            return httpx.Response(301, headers={"location": "https://www.studio.example/final"})
+        return httpx.Response(200, text="<main>Final</main>", headers={"content-type": "text/html"})
+
+    result = NativeCrawler(
+        AuditConfig(domain="http://studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page("http://studio.example/original")
+    assert result.state is DataState.AVAILABLE
+    assert result.url == "http://studio.example/original"
+    assert result.final_url == "https://www.studio.example/final"
+    assert len(requests) == 2
+
+
+def test_capture_page_checks_resolved_addresses_for_every_request():
+    addresses = iter([["8.8.8.8"], ["127.0.0.1"]])
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text="<main>Content</main>")
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=lambda _: next(addresses),
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED
+    assert requests == []
+
+
+@pytest.mark.parametrize("status_code", [403, 429, 500])
+def test_capture_page_records_http_failures_not_as_javascript_evidence(status_code):
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                status_code, text="<main>Blocked</main>", headers={"content-type": "text/html"}
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.UNKNOWN
+    assert result.status_code == status_code
+    assert str(status_code) in " ".join(result.limitations)
+
+
+def test_capture_page_reports_network_failure_and_max_redirect_failure():
+    def timeout(request):
+        raise httpx.ReadTimeout("No response", request=request)
+
+    for handler in (timeout, lambda _: httpx.Response(302, headers={"location": "/again"})):
+        result = NativeCrawler(
+            AuditConfig(domain="studio.example", max_redirects=1),
+            PRODUCTS,
+            transport=httpx.MockTransport(handler),
+            resolver=public_resolver,
+        ).capture_page("https://studio.example/")
+        assert result.state is DataState.FAILED
+        assert result.html is None and result.limitations
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_capture_page_enforces_stream_size_limit_including_redirect_bodies(redirect):
+    consumed = []
+
+    class Chunks(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(10):
+                consumed.append(1)
+                yield b"x" * 64
+
+    def handler(request):
+        headers = {"content-type": "text/html"}
+        if redirect:
+            headers["location"] = "/again"
+        return httpx.Response(302 if redirect else 200, stream=Chunks(), headers=headers)
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example", max_response_bytes=100),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED
+    assert result.html is None and result.truncated and not result.complete
+    assert "size limit" in " ".join(result.limitations)
+    assert len(consumed) < 10
+
+
+def test_capture_page_enforces_two_mib_even_when_config_allows_more():
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example", max_response_bytes=5_000_000),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, text="x" * (2 * 1024 * 1024 + 1), headers={"content-type": "text/html"}
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED and result.html is None
+
+
+@pytest.mark.parametrize("content_type", [None, "application/pdf", "text/plain", "text/not-html"])
+def test_capture_page_keeps_unknown_content_usability_separate_from_collection_failure(
+    content_type,
+):
+    from ai_search_audit.content_diagnostics import compare_captures
+
+    body = b"%PDF fake\xff\x00"
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                content=body,
+                headers={"content-type": content_type} if content_type is not None else {},
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.UNKNOWN
+    assert result.complete and not result.truncated
+    assert result.status_code == 200
+    assert result.content_type == content_type
+    assert result.body == body
+    assert result.html is None
+    assert "content type" in " ".join(result.limitations)
+    assert len(" ".join(result.limitations)) < 200
+    assert compare_captures(result, None).state is DataState.UNKNOWN
+
+
+def test_capture_page_missing_content_type_does_not_infer_html_usability_from_markup():
+    body = b"<main><h1>Studio</h1></main>"
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=body)),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.UNKNOWN
+    assert result.content_type is None and result.body == body
+    assert result.html is None
+
+
+@pytest.mark.parametrize("charset", ["base64_codec", "rot_13", "hex_codec"])
+def test_capture_page_nontext_charset_is_an_explicit_decode_failure(charset):
+    from ai_search_audit.content_diagnostics import compare_captures
+
+    content_type = f"text/html; charset={charset}"
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                content=b"<main>Source content</main>",
+                headers={"content-type": content_type},
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED
+    assert result.html is None and result.body is None
+    assert not result.complete and not result.truncated
+    assert result.url == result.final_url == "https://studio.example/"
+    assert result.status_code == 200 and result.content_type == content_type
+    assert result.limitations == ("HTML decoding failed: unsupported text charset.",)
+    assert compare_captures(result, None).state is DataState.FAILED
+
+
+@pytest.mark.parametrize("charset", ["utf-8", "unknown-charset"])
+def test_capture_page_text_charset_and_unknown_charset_controls(charset):
+    body = "<main>Żółć may take 2 days.</main>"
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                content=body.encode(),
+                headers={"content-type": f"text/html; charset={charset}"},
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.body == body.encode()
+    if charset == "utf-8":
+        assert result.state is DataState.AVAILABLE and result.html == body
+    else:
+        assert result.state is DataState.UNKNOWN and result.html is None
+        assert "charset" in " ".join(result.limitations)
+
+
+def _capture_encoded_html(body, content_type="text/html"):
+    return NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, content=body, headers={"content-type": content_type})
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+
+
+def test_capture_page_meta_charset_does_not_fabricate_rendered_only_polish_quote():
+    from ai_search_audit.content_diagnostics import (
+        build_render_parity_findings,
+        capture_html,
+        compare_captures,
+    )
+    from ai_search_audit.diagnostic_workflow import _raw_capture
+
+    quote = "Usługa może potrwać 2 dni. Termin nie jest gwarantowany."
+    html = (
+        "<html lang=pl><head><meta charset=windows-1250></head>"
+        f"<main><h2>Zakres</h2><p>{quote}</p></main></html>"
+    )
+    result = _capture_encoded_html(html.encode("cp1250"))
+    raw = _raw_capture(result, "anonymous-test")
+    rendered = capture_html(
+        html,
+        kind="rendered",
+        url="https://studio.example/",
+        observed_at=result.observed_at,
+        locale="pl",
+        session_key="anonymous-test",
+        consent_state="none",
+        status_code=200,
+        complete=True,
+        truncated=False,
+    )
+    pair = compare_captures(raw, rendered, key_quotes=(quote,))
+    findings = build_render_parity_findings(
+        raw, rendered, key_quotes=(quote,), as_of=result.observed_at.date()
+    )
+    assert (pair.rendered_only_quotes, findings) == ((), ())
+    assert pair.state is DataState.AVAILABLE
+    assert result.state is DataState.AVAILABLE and result.html == html
+    assert result.body == html.encode("cp1250")
+
+
+@pytest.mark.parametrize(
+    ("head", "encoding", "content_type"),
+    [
+        ("", "utf-8", "text/html"),
+        ("", "cp1250", "text/html; charset=windows-1250"),
+        ('<META CHARSET="Windows-1250">', "cp1250", "text/html"),
+        (
+            '<meta content="text/html; charset=windows-1250" http-equiv="Content-Type">',
+            "cp1250",
+            "text/html",
+        ),
+        ("<meta charset=windows-1250>", "cp1250", "text/html; charset=cp1250"),
+        ("", "utf-8-sig", "text/html"),
+        ("<meta charset=utf-8>", "utf-8-sig", "text/html; charset=UTF8"),
+        ("", "utf-16", "text/html"),
+        ("<meta charset=utf-16>", "utf-16", "text/html; charset=utf-16"),
+    ],
+)
+def test_capture_page_decodes_unambiguous_charset_declarations(head, encoding, content_type):
+    html = f"<html><head>{head}</head><main>Żółć może potrwać 2 dni.</main></html>"
+    body = html.encode(encoding)
+    result = _capture_encoded_html(body, content_type)
+    assert result.state is DataState.AVAILABLE
+    assert result.body == body and result.html == html
+    assert result.complete and not result.truncated
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        (b"<main>Bad \xff text</main>", "text/html; charset=utf-8"),
+        (b"<main>Bad \xff text</main>", "text/html"),
+        (b"<meta charset=utf-8><main>Bad \xff text</main>", "text/html"),
+        (b"<meta charset=unknown-charset><main>ASCII text</main>", "text/html"),
+        (b"<meta charset=''><main>ASCII text</main>", "text/html"),
+        (b"<main>ASCII text</main>", "text/html; charset="),
+        (b"<main>ASCII text</main>", 'text/html; charset="utf 8"'),
+        (b"<main>Caf\xc3\xa9</main>", "text/html; charset=utf_8"),
+        (b"<main>Caf\xc3\xa9</main>", "text/html; charset=utf--8"),
+        (b"<meta charset='utf/8'><main>ASCII text</main>", "text/html"),
+        (b"<meta charset=windows-1250><main>ASCII text</main>", "text/html; charset=utf-8"),
+        (b"<meta charset=utf-8><meta charset=windows-1250><main>ASCII text</main>", "text/html"),
+        (b"<main>ASCII text</main>", "text/html; charset=utf-8; charset=windows-1250"),
+        (b"\xef\xbb\xbf<main>ASCII text</main>", "text/html; charset=windows-1250"),
+        (b"<meta charset=utf-8 charset=windows-1250><main>ASCII text</main>", "text/html"),
+        ("<main>ASCII text</main>".encode("utf-16-le"), "text/html"),
+        ("<main>ASCII text</main>".encode("utf-32"), "text/html"),
+        (b"\xff\xfe<\x00m", "text/html"),
+        (
+            b"<?xml version='1.0' encoding='iso-8859-1'?><html><p>Caf\xc3\xa9</p></html>",
+            "application/xhtml+xml",
+        ),
+    ],
+)
+def test_capture_page_uncertain_decoding_cannot_assert_render_difference(body, content_type):
+    from ai_search_audit.content_diagnostics import build_render_parity_findings, compare_captures
+
+    result = _capture_encoded_html(body, content_type)
+    assert result.state is DataState.UNKNOWN
+    assert result.body == body and result.html is None
+    assert result.complete and not result.truncated
+    assert result.limitations and len(" ".join(result.limitations)) < 200
+    assert "Bad" not in " ".join(result.limitations)
+    assert compare_captures(result, None).state is DataState.UNKNOWN
+    assert build_render_parity_findings(result, None, as_of=result.observed_at.date()) == ()
+
+
+@pytest.mark.parametrize("element", ["script", "style", "title", "textarea", "xmp"])
+def test_capture_page_does_not_treat_raw_text_as_charset_declaration(element):
+    html = f"<{element}><meta charset=windows-1250></{element}><main>Café</main>"
+    result = _capture_encoded_html(html.encode())
+    assert result.state is DataState.AVAILABLE and result.html == html
+
+
+def test_capture_page_does_not_treat_commented_charset_as_declaration():
+    html = "<!-- <meta charset=windows-1250> --><main>Café</main>"
+    result = _capture_encoded_html(html.encode())
+    assert result.state is DataState.AVAILABLE and result.html == html
+
+
+def test_capture_page_charset_decoding_preserves_decoded_size_bound():
+    result = _capture_encoded_html(
+        b"<main>" + b"\xb9" * 1_100_000 + b"</main>", "text/html; charset=windows-1250"
+    )
+    assert result.state is DataState.FAILED
+    assert result.body is None and result.html is None
+    assert result.truncated and not result.complete
+    assert "Decoded HTML exceeded capture size limit" in " ".join(result.limitations)
+
+
+@pytest.mark.parametrize("path", ["/\x00bad", "/" + "x" * 66_000], ids=["control-byte", "overlong"])
+def test_capture_page_invalid_http_url_fails_before_network_without_retaining_invalid_url(path):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text="<main>Content</main>")
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example" + path)
+    assert result.state is DataState.FAILED
+    assert requests == []
+    assert result.url is None and result.final_url is None
+    assert result.html is None and result.body is None
+    assert result.limitations == ("Invalid HTTP target URL; capture was not collected.",)
+
+
+@pytest.mark.parametrize("path", ["/\x00bad", "/" + "x" * 66_000], ids=["control-byte", "overlong"])
+def test_capture_page_invalid_http_redirect_retains_only_safe_provenance(path):
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(302, headers={"location": "https://studio.example" + path})
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(handler),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.FAILED
+    assert requests == ["https://studio.example/"]
+    assert result.url == "https://studio.example/" and result.final_url is None
+    assert result.html is None and result.body is None
+    assert result.limitations == ("HTTP collection failed: RemoteProtocolError.",)
+
+
+def test_capture_response_boundary_rejects_fabricated_html_usability_and_oversized_body():
+    from pydantic import ValidationError
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                text="<main>Content</main>",
+                headers={"content-type": "text/html"},
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    for changes in [
+        {"content_type": None},
+        {"content_type": "application/pdf"},
+        {"body": b"x" * (2 * 1024 * 1024 + 1)},
+    ]:
+        with pytest.raises(ValidationError):
+            type(result).model_validate({**result.model_dump(), **changes})
+    assert "body=" not in repr(result)
+
+
+def test_capture_response_boundary_rejects_cross_scope_and_failed_body():
+    from pydantic import ValidationError
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, text="<main>Content</main>", headers={"content-type": "text/html"}
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    for changes in [
+        {"final_url": "https://unrelated.example/"},
+        {"state": DataState.FAILED, "limitations": ("failure",)},
+        {"truncated": True},
+    ]:
+        with pytest.raises(ValidationError):
+            type(result).model_validate({**result.model_dump(), **changes})
+
+
+def test_collector_challenge_marker_stays_unknown_through_comparison():
+    from ai_search_audit.content_diagnostics import compare_captures
+
+    result = NativeCrawler(
+        AuditConfig(domain="studio.example"),
+        PRODUCTS,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                text="<main>Wait</main>",
+                headers={"content-type": "text/html", "cf-mitigated": "challenge"},
+            )
+        ),
+        resolver=public_resolver,
+    ).capture_page("https://studio.example/")
+    assert result.state is DataState.UNKNOWN
+    diagnostic = compare_captures(result, None, key_quotes=("Invented",))
+    assert diagnostic.state is DataState.UNKNOWN
+    assert "challenge" in " ".join(diagnostic.limitations)
+    assert diagnostic.rendered_only_quotes == ()
 
 
 def test_crawler_parses_products_supplied_by_registry_without_vendor_constants() -> None:

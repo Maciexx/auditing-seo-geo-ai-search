@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+- Added source-bound PageSpeed Insights and CrUX collection plus an isolated local Lighthouse
+  fallback, with explicit unavailable and failed states.
+- Added guarded, optional OpenAI API observations with explicit paid-use consent, bounded request
+  profiles, retained citations, and separate usage estimates.
+- Added project commands for measurements, AI observations, diagnostics, benchmark preparation,
+  and reviewed report projection without changing canonical readiness scores.
+- Updated the public prompt pack and entity-classification policy to version 2.0.
+- Added bounded supplementary raw/rendered content comparisons and source-backed passage
+  assessments without changing readiness scores or the client PDF design.
+- Added frozen AI observation worksheets, explicit setup compatibility and separate mention
+  and citation measurements with honest missing-data states.
+- Added owned diagnostic intake, immutable runs, selected-run comparison and reviewed-PDF
+  provenance binding, with synthetic Polish and English end-to-end coverage.
+- Documented the supplementary workflow and extended release checks for private diagnostic outputs.
 
 ## 0.2.0
 

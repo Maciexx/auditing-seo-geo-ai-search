@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
+from urllib.parse import urlsplit
 
 PRIVATE_PARTS = {"clients", "audit-output", "owned-input", ".staging", "output", "tmp"}
 GENERATED = {
@@ -20,7 +23,59 @@ GENERATED = {
     "ai-prompts.json",
     "client-report-data.json",
     "report-draft.json",
+    "diagnostics.json",
 }
+
+
+def fabricated_diagnostic_example(path: Path, value: object) -> bool:
+    """A narrow fixture declaration, never an exemption for a copied run directory."""
+    if (
+        path.parts[:1] != ("fixtures",)
+        or path.name != "diagnostics.example.json"
+        or not isinstance(value, dict)
+        or value.get("synthetic") is not True
+        or not isinstance(value.get("domain"), str)
+        or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.example", value["domain"])
+    ):
+        return False
+
+    def safe(item: object) -> bool:
+        if isinstance(item, dict):
+            return all(safe(key) and safe(child) for key, child in item.items())
+        if isinstance(item, list):
+            return all(safe(child) for child in item)
+        if not isinstance(item, str):
+            return True
+        # IDNA recognizes these dot variants. Tokenize Unicode labels (including
+        # combining marks) before checking nested bindings and quoted domains.
+        sample = unicodedata.normalize("NFC", item.translate(str.maketrans("。．｡", "...")))
+        label = r"[^\s/.:@?#<>\"'()\[\]{},;!\\]+"
+        for domain in re.findall(rf"{label}(?:\.{label})+", sample):
+            if re.fullmatch(r"[0-9.]+", domain):
+                continue
+            try:
+                hostname = domain.encode("idna").decode("ascii").lower()
+            except UnicodeError:
+                return False
+            if not hostname.endswith(".example"):
+                return False
+        for url in re.findall(r"https?://[^\s<>\"']+", sample, flags=re.IGNORECASE):
+            try:
+                parsed = urlsplit(url)
+                _ = parsed.port
+                hostname = (parsed.hostname or "").encode("idna").decode("ascii").lower()
+            except (ValueError, UnicodeError):
+                return False
+            if (
+                parsed.username is not None
+                or parsed.password is not None
+                or "\\" in url
+                or not hostname.endswith(".example")
+            ):
+                return False
+        return True
+
+    return safe(value)
 
 
 def git(root: Path, *arguments: str) -> bytes:
@@ -47,6 +102,10 @@ def inspect(name: str, payload: bytes, terms: tuple[str, ...]) -> list[str]:
     if (
         PRIVATE_PARTS.intersection(path.parts)
         or path.name in GENERATED
+        or any(
+            parts[0] == "diagnostics" and re.fullmatch(r"run-[1-9][0-9]*", parts[2])
+            for parts in zip(path.parts, path.parts[1:], path.parts[2:], strict=False)
+        )
         or path.suffix.lower() in {".pdf", ".csv", ".xlsx"}
         or path.parts[:2] == ("docs", "superpowers")
     ):
@@ -54,10 +113,25 @@ def inspect(name: str, payload: bytes, terms: tuple[str, ...]) -> list[str]:
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
+        if path.name == "diagnostics.example.json":
+            issues.append(f"undeclared diagnostic output: {label}")
         return issues
     folded = normalized(text)
     if any(term in folded for term in terms):
         issues.append(f"configured private identifier: {label}")
+    if path.suffix.lower() == ".json":
+        try:
+            value = json.loads(text)
+        except ValueError:
+            value = None
+        diagnostic_shape = isinstance(value, dict) and (
+            {"binding", "module_states"} <= value.keys()
+            or {"binding", "algorithm_sha256", "files"} <= value.keys()
+        )
+        if (diagnostic_shape or path.name == "diagnostics.example.json") and not (
+            fabricated_diagnostic_example(path, value)
+        ):
+            issues.append(f"undeclared diagnostic output: {label}")
     return issues
 
 
