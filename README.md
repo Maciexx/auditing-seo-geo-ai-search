@@ -10,7 +10,7 @@ Turn a public website into an evidence-led SEO, GEO, AEO, and AI Search audit wi
 ## What it does
 
 - Checks crawl and index signals, sitemaps, canonicals, redirects, and bot access.
-- Reviews content, information architecture, languages, and citability.
+- Reviews content structure, information architecture, languages, and source-supported facts.
 - Compares structured data, entity signals, and the site's public truth.
 - Records independent listings, reviews, press, and directory evidence.
 - Builds AI prompt families and records observed visibility when observation is available.
@@ -30,7 +30,7 @@ It does not promise rankings, citations, traffic, or revenue. Every sample is la
 git clone https://github.com/Maciexx/auditing-seo-geo-ai-search.git ~/.codex/skills/auditing-seo-geo-ai-search
 cd ~/.codex/skills/auditing-seo-geo-ai-search
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/python -m pip install .
 ```
 
 Other Agent Skills hosts can use the same repository from their configured skill directory. Read [SKILL.md](SKILL.md) before installation because the workflow can access the network, run a bounded crawler, and create local report files.
@@ -93,6 +93,14 @@ The default final deliverable is a concise PDF plus editable Markdown. Detailed 
 - `report-draft.json`
 - `client-report-data.json`
 - `client-report.pdf`
+
+## Google Search and AI features
+
+The Google checklist distinguishes Search AI participation, crawler access and preview controls.
+Optional Search Console generative AI impressions remain separate from general Web totals and
+manual AI observations. Content structure is an editorial diagnostic, not a citation prediction.
+See [Google SEO and AI Search checks](references/google-search.md) for current guidance,
+measurement limitations and owner evidence requirements.
 
 ## Limits and privacy
 

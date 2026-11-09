@@ -1,0 +1,130 @@
+{% if data.validation_comparison %}
+<section class="report-section validation-comparison-section">
+  <p class="eyebrow">{{ t.validation_eyebrow }}</p>
+  <h2>{{ t.validation_heading }}</h2>
+  <p>{{ t.validation_chronology }}</p>
+  <p class="scope-note">
+    {{ t.causality }}: {{ t.comparison_causalities[data.validation_comparison.causality.value] }}.
+    {{ t.validation_noncausal_note }}
+  </p>
+  <table class="metadata-table">
+    <tbody>
+      <tr>
+        <th>{{ t.baseline_audit }}</th>
+        <td>{{ data.validation_comparison.baseline_audit_id or t.not_available }}</td>
+      </tr>
+      <tr>
+        <th>{{ t.follow_up_audit }}</th>
+        <td>{{ data.validation_comparison.follow_up_audit_id or t.not_available }}</td>
+      </tr>
+      <tr>
+        <th>{{ t.implementation_date }}</th>
+        <td>{{ data.validation_comparison.implementation_date or t.not_available }}</td>
+      </tr>
+      <tr>
+        <th>{{ t.validation_target }}</th>
+        <td>{{ data.validation_comparison.validation_target_date or t.not_available }}</td>
+      </tr>
+      <tr>
+        <th>{{ t.validation_observed }}</th>
+        <td>{{ data.validation_comparison.observed_at or t.not_available }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if data.validation_comparison.timing_warning %}
+    <p class="scope-note">{{ t.early_validation_warning }}</p>
+  {% endif %}
+  {% if data.validation_comparison.metrics %}
+    <h3>{{ t.metric_comparisons }}</h3>
+    <table class="measurement-table">
+      <thead>
+        <tr>
+          <th>{{ t.metric }}</th>
+          <th>{{ t.baseline }}</th>
+          <th>{{ t.follow_up }}</th>
+          <th>{{ t.delta }}</th>
+          <th>{{ t.data_quality }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for metric in data.validation_comparison.metrics %}
+          <tr>
+            <td>
+              <strong>{{ metric.metric }}</strong><br>
+              <span class="muted">{{ metric.metric_id }} · {{ t.comparison_bases[metric.basis.value] }}</span>
+            </td>
+            <td>
+              {% if metric.baseline_value is not none %}
+                {{ metric.baseline_value }} {{ metric.unit }}
+              {% else %}
+                {{ t.not_numeric }} ({{ t.states[metric.baseline_state.value] }})
+              {% endif %}
+            </td>
+            <td>
+              {% if metric.follow_up_value is not none %}
+                {{ metric.follow_up_value }} {{ metric.unit }}
+              {% else %}
+                {{ t.not_numeric }} ({{ t.states[metric.follow_up_state.value] }})
+              {% endif %}
+            </td>
+            <td>
+              {% if metric.absolute_delta is not none %}
+                {{ metric.absolute_delta }} {{ metric.unit }}
+                {% if metric.relative_delta_percent is not none %}
+                  ({{ '%.1f' | format(metric.relative_delta_percent) }}%)
+                {% endif %}
+              {% else %}
+                {{ t.states[metric.state.value] }}
+              {% endif %}
+            </td>
+            <td>
+              {{ t.coverage }} {{ '%.0f' | format(metric.coverage * 100) }}%<br>
+              {{ t.confidence }} {{ '%.0f' | format(metric.confidence * 100) }}%<br>
+              {{ t.source }}: {{ (metric.baseline_source_ids + metric.follow_up_source_ids) | join(', ') }}
+              {% for limitation in metric.limitations %}
+                <br><span class="muted">{{ t.comparison_limitations[limitation.value] }}</span>
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty-state">{{ t.no_comparable_metrics }}</p>
+  {% endif %}
+  {% if data.validation_comparison.ai_visibility %}
+    <h3>{{ t.ai_visibility_comparison }}</h3>
+    <p>
+      {{ t.state_label }}:
+      {{ t.states[data.validation_comparison.ai_visibility.state.value] }}.
+      {% if data.validation_comparison.ai_visibility.absolute_delta is not none %}
+        {{ t.delta }}: {{ data.validation_comparison.ai_visibility.absolute_delta }} {{ t.percentage_points }}.
+      {% endif %}
+    </p>
+    {% for limitation in data.validation_comparison.ai_visibility.limitations %}
+      <p class="muted">{{ t.comparison_limitations[limitation.value] }}</p>
+    {% endfor %}
+  {% endif %}
+  {% if data.validation_comparison.findings %}
+    <h3>{{ t.public_finding_changes }}</h3>
+    <table class="metadata-table">
+      <thead>
+        <tr>
+          <th>{{ t.rule }}</th>
+          <th>{{ t.change }}</th>
+          <th>{{ t.findings_label }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in data.validation_comparison.findings %}
+          <tr>
+            <td>{{ item.rule_id }}</td>
+            <td>{{ t.finding_changes[item.change.value] }}</td>
+            <td>{{ (item.baseline_finding_ids + item.follow_up_finding_ids) | join(', ') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+{% endif %}

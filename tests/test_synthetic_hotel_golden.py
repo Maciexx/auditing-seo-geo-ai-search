@@ -70,7 +70,7 @@ def test_synthetic_hotel_golden_audit_is_evidence_rich(tmp_path: Path) -> None:
     scores = {score.name: score for score in run.scores}
     assert expected["forbidden_score"] not in scores
     assert scores["Technical Search Readiness"].total_checks >= expected["minimum_technical_checks"]
-    assert scores["Content Citability"].total_checks >= expected["minimum_content_checks"]
+    assert scores["Content Structure"].total_checks >= expected["minimum_content_checks"]
     for score_name in expected["unavailable_scores"]:
         assert scores[score_name].state.value == "UNAVAILABLE"
         assert scores[score_name].value is None

@@ -55,7 +55,7 @@ def test_every_pack_contains_owner_gsc_and_separate_ga4_requests(
     modules = [item.module for item in pack.items]
 
     assert modules[0] == "owner_context"
-    assert modules.count("google_search_console") == 5
+    assert modules.count("google_search_console") == 6
     assert modules.count("ga4_organic_search") == 1
     assert modules.count("ga4_ai_assistant") == 1
 
@@ -90,6 +90,7 @@ def test_gsc_requests_five_distinct_reports_with_exact_coverage(locale: str) -> 
 
     assert tuple(by_id) == (
         "google_search_console",
+        "google_search_generative_ai",
         "google_search_console_page_indexing",
         "google_search_console_sitemaps",
         "google_search_console_core_web_vitals",
@@ -847,3 +848,14 @@ def test_rollback_failure_removes_new_outputs_and_preserves_recovery_files(
     staging = list(tmp_path.glob(".data-request-*"))
     assert len(staging) == 1
     assert (staging[0] / "previous.json").read_text(encoding="utf-8") == '{"old": true}\n'
+
+
+def test_legacy_request_version_retains_original_catalog():
+    legacy = build_data_request(request_context(), version="1.0.0")
+    fresh = build_data_request(request_context())
+    assert legacy.version == "1.0.0"
+    assert fresh.version == "1.1.0"
+    added = {"google_search_generative_ai", "google_search_ai_control"}
+    assert not added.intersection(item.item_id for item in legacy.items)
+    assert added.issubset(item.item_id for item in fresh.items)
+    assert legacy.items == tuple(item for item in fresh.items if item.item_id not in added)

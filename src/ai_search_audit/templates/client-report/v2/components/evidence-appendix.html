@@ -1,0 +1,12 @@
+<section class="report-section appendix-section">
+  <p class="eyebrow">{{ t.evidence_eyebrow }}</p>
+  <h2>{{ t.evidence_heading }}</h2>
+  {% for evidence in data.evidence_appendix %}
+    <article class="evidence-item">
+      <div class="evidence-head"><strong>{{ evidence.evidence_id }}</strong><span>{{ evidence.source_type }} · {{ evidence.source_scope }}</span></div>
+      <p><strong>{{ t.source }}:</strong> {{ evidence.source }}{% if evidence.url %} · {{ evidence.url }}{% endif %}</p>
+      <p class="observation">{{ evidence.observation }}</p>
+      <p class="evidence-refs">{{ t.collected }} {{ evidence.collected_at.isoformat() }} · {{ t.confidence }} {{ "%.0f"|format(evidence.confidence * 100) }}%</p>
+    </article>
+  {% endfor %}
+</section>

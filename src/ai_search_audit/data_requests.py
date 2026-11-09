@@ -97,6 +97,12 @@ _ITEM_CATALOG: Mapping[str, _CanonicalItem] = MappingProxyType(
         "google_search_console": _CanonicalItem(
             DataRequestModule.GOOGLE_SEARCH_CONSOLE, RequestImportance.REQUIRED
         ),
+        "google_search_generative_ai": _CanonicalItem(
+            DataRequestModule.GOOGLE_SEARCH_CONSOLE, RequestImportance.OPTIONAL
+        ),
+        "google_search_ai_control": _CanonicalItem(
+            DataRequestModule.OWNER_CONTEXT, RequestImportance.OPTIONAL
+        ),
         "google_search_console_page_indexing": _CanonicalItem(
             DataRequestModule.GOOGLE_SEARCH_CONSOLE, RequestImportance.REQUIRED
         ),
@@ -279,7 +285,7 @@ class DataRequestItem(FrozenDataRequestModel):
 
 class DataRequestPack(FrozenDataRequestModel):
     schema_version: Literal["1.0.0"] = "1.0.0"
-    version: Literal["1.0.0"] = "1.0.0"
+    version: Literal["1.0.0", "1.1.0"] = "1.1.0"
     project_id: str
     canonical_domain: str
     entity_kind: EntityKind
@@ -384,12 +390,19 @@ def _item_applies(item_id: str, context: DataRequestContext) -> bool:
     return entity_applies and feature_applies
 
 
-def build_data_request(context: DataRequestContext) -> DataRequestPack:
+def build_data_request(
+    context: DataRequestContext, *, version: Literal["1.0.0", "1.1.0"] = "1.1.0"
+) -> DataRequestPack:
     """Build a deterministic, locally rendered request pack for the next audit."""
     resource = _load_locale_resource(context.locale)
     localized_by_id = {item.item_id: item for item in resource.items}
     built_items: list[DataRequestItem] = []
     for item_id, behavior in _ITEM_CATALOG.items():
+        if version == "1.0.0" and item_id in {
+            "google_search_generative_ai",
+            "google_search_ai_control",
+        }:
+            continue
         template = localized_by_id.get(item_id)
         if template is None:
             raise RuntimeError(f"locale resource is missing canonical item {item_id!r}")
@@ -418,6 +431,7 @@ def build_data_request(context: DataRequestContext) -> DataRequestPack:
         )
     items = tuple(built_items)
     return DataRequestPack(
+        version=version,
         project_id=context.project_id,
         canonical_domain=context.canonical_domain,
         entity_kind=context.entity_kind,

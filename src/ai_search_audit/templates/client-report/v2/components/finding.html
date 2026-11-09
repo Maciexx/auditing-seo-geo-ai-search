@@ -1,0 +1,27 @@
+<article class="finding-card">
+  <div class="finding-head">
+    <span class="priority">{{ finding.priority.value }}</span>
+    <div>
+      <p class="finding-category">{{ finding.category|replace("_", " ") }}</p>
+      <h3>{{ finding.client_title }}</h3>
+    </div>
+    <span class="finding-status">{{ t.finding_statuses[finding.status.value] }}</span>
+  </div>
+  <div class="finding-body">
+    <div><h4>{{ t.what_found }}</h4><p>{{ finding.client_explanation }}</p></div>
+    <div><h4>{{ t.why_matters }}</h4><p>{{ finding.business_impact }}</p></div>
+    <div class="recommendation"><h4>{{ t.recommendation_implementation }}</h4><p>{{ finding.implementation }}</p></div>
+  </div>
+  <div class="finding-meta">
+    <span>{{ t.confidence }} {{ "%.0f"|format(finding.confidence * 100) }}%</span>
+    <span>{{ t.rule_evidence }} {{ finding.rule_evidence_level or t.unavailable }}</span>
+    <span>{{ finding.affected_urls|length }} {% if finding.affected_urls|length == 1 %}{{ t.affected_url }}{% else %}{{ t.affected_urls }}{% endif %}</span>
+  </div>
+  {% if finding.affected_urls %}
+    <ul class="url-sample">
+      {% for url in finding.affected_urls[:5] %}<li>{{ url }}</li>{% endfor %}
+    </ul>
+    {% if finding.affected_urls|length > 5 %}<p class="bounded-note">{{ t.showing_urls_prefix }} {{ finding.affected_urls|length }} {{ t.showing_urls_suffix }}</p>{% endif %}
+  {% endif %}
+  <p class="evidence-refs">{{ t.evidence }}: {{ finding.evidence_ids|join(", ") }}</p>
+</article>

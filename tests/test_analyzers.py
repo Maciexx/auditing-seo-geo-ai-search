@@ -16,6 +16,7 @@ def test_page_analyzer_creates_evidence_backed_noindex_finding() -> None:
         final_url="https://example.com/hidden",
         status_code=200,
         robots_directives=["noindex"],
+        google_robots_directives=["noindex"],
         indexable=False,
         indexability_reasons=["meta robots noindex"],
     )
@@ -216,3 +217,60 @@ def test_not_discovered_sitemap_wording_does_not_claim_confirmed_absence() -> No
     ).casefold()
     assert "does not have a sitemap" not in wording
     assert "not discovered" in wording
+
+
+def test_short_page_without_h2_has_no_citation_penalty():
+    page = Page(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        title="Opening hours",
+        h1=["Opening hours"],
+        content_text="Monday: 9–5",
+    )
+    findings = analyze_pages([page], [], REGISTRY, as_of=datetime(2026, 11, 9).date())
+    assert all(item.rule_id != "content-citability-001" for item in findings)
+    assert all(
+        item.rule_scoring_weight == 0
+        for item in findings
+        if item.rule_id == "content-structure-002"
+    )
+
+
+@pytest.mark.parametrize("directives", [["max-snippet: -1"], ["max-snippet: -2"], []])
+def test_unrestricted_or_invalid_preview_is_not_reported_as_limitation(directives):
+    page = Page(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        google_robots_directives=directives,
+        robots_directives=["nosnippet"],
+    )
+    findings = analyze_pages([page], [], REGISTRY, as_of=datetime(2026, 11, 9).date())
+    assert not any(item.rule_id == "google-preview-controls-001" for item in findings)
+
+
+def test_google_preview_finding_retains_direct_evidence_and_claim():
+    page = Page(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        google_robots_directives=["max-snippet: 0"],
+        data_nosnippet_count=2,
+    )
+    evidence = Evidence(
+        evidence_id="preview-page",
+        source_url=page.url,
+        source_type="web_page",
+        collector="native-crawler",
+        observed_at=datetime.now(UTC),
+        observed_value={"google_robots_directives": ["max-snippet: 0"], "data_nosnippet_count": 2},
+    )
+    finding = next(
+        item
+        for item in analyze_pages([page], [evidence], REGISTRY, as_of=datetime(2026, 11, 9).date())
+        if item.rule_id == "google-preview-controls-001"
+    )
+    assert finding.rule_scoring_weight == 0
+    assert finding.factual_claims[0].evidence_ids == ["preview-page"]
+    assert finding.factual_claims[0].numbers == ["0", "2"]

@@ -11,8 +11,8 @@ ROOT = Path(__file__).parents[1]
 def test_registry_loads_all_required_files() -> None:
     registry = load_registry(ROOT / "knowledge")
     assert isinstance(registry, KnowledgeRegistry)
-    assert registry.version == "2026.09.04"
-    assert registry.verified_date.isoformat() == "2026-09-04"
+    assert registry.version == "2026.11.09"
+    assert registry.verified_date.isoformat() == "2026-11-09"
     assert len(registry.rules) >= 9
 
 
@@ -101,6 +101,12 @@ def test_content_diagnostic_rules_are_explicit_non_scoring_inferences(
         not in {
             "content-render-parity-001",
             "content-section-context-001",
+            "content-structure-002",
+            "google-preview-controls-001",
+            "google-search-ai-control-001",
+            "google-generative-report-001",
+            "google-extended-001",
+            "google-ai-features-002",
             "performance-psi-score-001",
             "performance-lcp-thresholds-001",
         }

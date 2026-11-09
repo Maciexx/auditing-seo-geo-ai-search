@@ -973,3 +973,154 @@ def test_metric_point_bound_accepts_512_and_rejects_513() -> None:
             **common,
             points=(*points, VisibilityMetricPoint(period_start=date(2020, 1, 2), value=1)),
         )
+
+
+def test_generative_impressions_require_report_identity_and_verified_zeros():
+    source = _source(
+        "gsc", VisibilitySource.GOOGLE_SEARCH_CONSOLE, report_type="generative-ai-performance"
+    )
+    metadata = (
+        "search_type=web_text",
+        "timezone=America/Los_Angeles",
+        "gsc_property=sc-domain:example.com",
+        "report_scope=property",
+        "zero_semantics=observed",
+    )
+    series = _series(
+        source_id="gsc",
+        metric="gsc.generative_ai.impressions",
+        unit="impressions",
+        filters=metadata,
+    )
+    assert aggregate_series(series, source=source).value == 0
+    with pytest.raises(ValueError, match="report"):
+        aggregate_series(series, source=source.model_copy(update={"report_type": "search-results"}))
+    with pytest.raises(ValueError, match="zero"):
+        aggregate_series(series.model_copy(update={"filters": metadata[:-1]}), source=source)
+    with pytest.raises(ValueError, match="separate|generative"):
+        aggregate_series(
+            series.model_copy(
+                update={"metric": "gsc.impressions", "filters": ("search_type=web",)}
+            ),
+            source=source,
+        )
+
+
+@pytest.mark.parametrize("search_type", ["web_text", "web_multimodal"])
+def test_generative_missing_values_stay_unknown(search_type):
+    source = _source(
+        "gsc", VisibilitySource.GOOGLE_SEARCH_CONSOLE, report_type="generative-ai-performance"
+    )
+    series = _series(
+        source_id="gsc",
+        metric="gsc.generative_ai.impressions",
+        unit="impressions",
+        state=DataState.UNKNOWN,
+        coverage=0.0,
+        confidence=0.0,
+        points=(),
+        filters=(
+            f"search_type={search_type}",
+            "timezone=America/Los_Angeles",
+            "gsc_property=sc-domain:example.com",
+            "report_scope=page",
+        ),
+    )
+    result = aggregate_series(series, source=source)
+    assert result.value is None and not result.points
+
+
+def test_generative_snapshot_revalidates_report_identity_and_comparison_scope():
+    from ai_search_audit.comparisons import ComparisonLimitation, compare_visibility
+
+    source = _source(
+        "gsc", VisibilitySource.GOOGLE_SEARCH_CONSOLE, report_type="generative-ai-performance"
+    )
+
+    def snapshot(search_type="web_text", scope="property", prop="sc-domain:example.com"):
+        metric = aggregate_series(
+            _series(
+                source_id="gsc",
+                metric="gsc.generative_ai.impressions",
+                unit="impressions",
+                filters=(
+                    f"search_type={search_type}",
+                    "timezone=America/Los_Angeles",
+                    f"gsc_property={prop}",
+                    f"report_scope={scope}",
+                    "zero_semantics=observed",
+                ),
+            ),
+            source=source,
+        )
+        return VisibilitySnapshot(
+            project_id="example",
+            canonical_domain="example.com",
+            processed_at=NOW,
+            deleted_at=NOW,
+            metrics=(metric,),
+            sources=(source,),
+        )
+
+    baseline = snapshot()
+    assert VisibilitySnapshot.model_validate_json(baseline.model_dump_json()) == baseline
+    forged = baseline.model_dump(mode="json")
+    forged["sources"][0]["report_type"] = "search-results"
+    forged["metrics"][0]["definitions"][0] = "report_type=search-results"
+    with pytest.raises(ValueError, match="generative"):
+        VisibilitySnapshot.model_validate(forged)
+    for follow_up in (
+        snapshot("web_multimodal"),
+        snapshot(scope="page"),
+        snapshot(prop="https://example.com/news/"),
+    ):
+        comparison = compare_visibility(baseline, follow_up)
+        assert ComparisonLimitation.DEFINITION_FILTER_MISMATCH in comparison.metrics[0].limitations
+        assert comparison.metrics[0].absolute_delta is None
+
+
+def test_generative_impressions_require_exact_property_and_reject_surface_claims():
+    source = _source(
+        "gsc", VisibilitySource.GOOGLE_SEARCH_CONSOLE, report_type="generative-ai-performance"
+    )
+    filters = (
+        "search_type=web_text",
+        "timezone=America/Los_Angeles",
+        "report_scope=property",
+        "zero_semantics=observed",
+    )
+
+    def series(extra=()):
+        return _series(
+            source_id="gsc",
+            metric="gsc.generative_ai.impressions",
+            unit="impressions",
+            filters=filters + extra,
+        )
+
+    with pytest.raises(ValueError, match="property"):
+        aggregate_series(series(), source=source)
+    for surface in ("surface=AI Mode", "surface=AIO", "search_appearance=AI Overviews"):
+        with pytest.raises(ValueError, match="surface"):
+            aggregate_series(series(("gsc_property=sc-domain:example.com", surface)), source=source)
+    metric = aggregate_series(series(("gsc_property=https://example.com/news/",)), source=source)
+    assert "gsc_property=https://example.com/news/" in metric.definitions
+    snapshot = VisibilitySnapshot(
+        project_id="example",
+        canonical_domain="example.com",
+        processed_at=NOW,
+        deleted_at=NOW,
+        metrics=(metric,),
+        sources=(source,),
+    )
+    forged = snapshot.model_dump(mode="json")
+    forged["metrics"][0]["definitions"].append("surface=AI Mode")
+    with pytest.raises(ValueError, match="surface"):
+        VisibilitySnapshot.model_validate(forged)
+    forged = snapshot.model_dump(mode="json")
+    definitions = forged["metrics"][0]["definitions"]
+    definitions[definitions.index("gsc_property=https://example.com/news/")] = (
+        "gsc_property=sc-domain:other.example"
+    )
+    with pytest.raises(ValueError, match="property"):
+        VisibilitySnapshot.model_validate(forged)

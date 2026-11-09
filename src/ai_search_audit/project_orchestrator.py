@@ -955,7 +955,8 @@ def validate_project_bundle(
             audit,
             project_id=expected_project_id,
             locale=artifact_locale,
-        )
+        ),
+        version=request_pack.version,
     )
     if request_pack != expected_request_pack:
         raise ValueError("data-request pack does not match canonical audit-derived request")

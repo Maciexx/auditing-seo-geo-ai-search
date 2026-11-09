@@ -14,7 +14,7 @@
   "invalid_json_ld_affected_pages": 2,
   "invalid_json_ld_error": "Extra data",
   "report_schema_version": "1.2.0",
-  "report_template_version": "1.2.0",
+  "report_template_version": "1.3.0",
   "required_pdf_sections": [
     "Executive Summary",
     "Readiness Scorecard",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "auditing-seo-geo-ai-search"
-version = "0.3.0"
+version = "0.4.0"
 description = "Evidence-led SEO, GEO, and AI Search audit Agent Skill"
 requires-python = ">=3.11"
 dependencies = [

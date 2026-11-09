@@ -262,4 +262,4 @@ def test_release_version_is_updated_consistently():
     from ai_search_audit import __version__
 
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert __version__ == project["project"]["version"] == "0.3.0"
+    assert __version__ == project["project"]["version"] == "0.4.0"

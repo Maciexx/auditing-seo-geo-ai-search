@@ -285,3 +285,87 @@ def test_owner_context_publishes_explicit_collection_bounds() -> None:
 
     assert properties["facts"]["maxItems"] == 500
     assert properties["sources"]["maxItems"] == 32
+
+
+def test_search_ai_control_requires_dated_complete_owner_evidence():
+    from ai_search_audit.owner_context import search_ai_control
+
+    assert search_ai_control(None).effective == "unknown"
+    facts = tuple(
+        OwnerFactInput(
+            fact_id=f"ai-{name}",
+            field=f"search_ai_{name}",
+            value=value,
+            source_id="owner-answer",
+            as_of=NOW.date(),
+            approval_state=FactApprovalState.APPROVED,
+        )
+        for name, value in (
+            ("property", "https://example.com/path/"),
+            ("selected", "inherit"),
+            ("effective", "exclude"),
+            ("parent", "sc-domain:example.com"),
+        )
+    )
+    context = build_owner_context(_processed(*facts))
+    assert search_ai_control(context).effective == "exclude"
+    assert search_ai_control(context).selected == "inherit"
+    assert search_ai_control(build_owner_context(_processed(*facts[:-1]))).effective == "unknown"
+
+
+@pytest.mark.parametrize(
+    "property_value,parent",
+    [
+        ("https://unrelated.example/", "sc-domain:unrelated.example"),
+        ("https://example.com/path/", "sc-domain:unrelated.example"),
+        ("sc-domain:example.com", "sc-domain:example.com"),
+    ],
+)
+def test_search_ai_control_rejects_unrelated_or_non_parent_properties(property_value, parent):
+    from ai_search_audit.owner_context import search_ai_control
+
+    facts = tuple(
+        OwnerFactInput(
+            fact_id=f"ai-{name}",
+            field=f"search_ai_{name}",
+            value=value,
+            source_id="owner-answer",
+            as_of=NOW.date(),
+            approval_state=FactApprovalState.APPROVED,
+        )
+        for name, value in (
+            ("property", property_value),
+            ("selected", "inherit"),
+            ("effective", "exclude"),
+            ("parent", parent),
+        )
+    )
+    assert search_ai_control(build_owner_context(_processed(*facts))).effective == "unknown"
+
+
+@pytest.mark.parametrize("field", ["property", "parent"])
+@pytest.mark.parametrize(
+    "malformed", ["https://[broken", "https://example.com:invalid/", "https://example.com:99999/"]
+)
+def test_search_ai_control_invalid_property_syntax_is_unknown(field, malformed):
+    from ai_search_audit.owner_context import search_ai_control
+
+    values = {
+        "property": "https://example.com/path/",
+        "selected": "inherit",
+        "effective": "exclude",
+        "parent": "sc-domain:example.com",
+    }
+    values[field] = malformed
+    facts = tuple(
+        OwnerFactInput(
+            fact_id=f"ai-{name}",
+            field=f"search_ai_{name}",
+            value=value,
+            source_id="owner-answer",
+            as_of=NOW.date(),
+            approval_state=FactApprovalState.APPROVED,
+        )
+        for name, value in values.items()
+    )
+    assert search_ai_control(build_owner_context(_processed(*facts))).effective == "unknown"

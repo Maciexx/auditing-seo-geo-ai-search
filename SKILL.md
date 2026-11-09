@@ -33,6 +33,10 @@ checkout is installed, run:
 ai-search-audit audit https://example.com --output-dir audit-output/example --report-locale en
 ```
 
+When the skill has a local `.venv`, invoke its `.venv/bin/ai-search-audit` executable;
+otherwise use the installed command shown above. For source development, use `PYTHONPATH=src`
+rather than relying on editable-install `.pth` discovery.
+
 The engine writes `audit.json`, `evidence.jsonl`, `implementation-backlog.csv`, `ai-prompts.json`,
 `report-draft.json`, `client-report-data.json`, and `client-report.pdf`. Use these artifacts as an
 evidence and implementation layer. A bounded public crawl does not prove sitewide coverage, and
@@ -187,6 +191,10 @@ Define a controlled source-of-truth process: canonical record, accountable owner
 
 ### 4. Audit technical discovery and bot access
 
+For Google Search, read [Google SEO and AI Search checks](references/google-search.md)
+before interpreting eligibility, preview controls, Search Console settings, or AI metrics.
+Keep Google Search AI features separate from Gemini and Google-Extended controls.
+
 Inspect what the available tools and access can prove. Cover, where applicable:
 
 - response status, redirect behavior, HTTPS and host consistency;
@@ -201,7 +209,14 @@ Inspect what the available tools and access can prove. Cover, where applicable:
 
 State whether each conclusion comes from a sample, crawler, index report, Search Console, logs, CMS, or another dataset. Bot permission shows possible access, not indexing, retrieval, citation, or recommendation.
 
-Treat `llms.txt` and similar emerging conventions as optional experiments unless current, authoritative support proves a specific use. Never present them as universal requirements or ranking factors.
+Treat `llms.txt` and similar emerging conventions as optional experiments for systems with documented support. Google Search ignores llms.txt; it is not a Google visibility recommendation. Never present special AI files, mandatory chunking, or an AI-specific schema as universal requirements or ranking factors.
+
+Separate observed public access, technical eligibility, confirmed indexing, and actual appearance.
+A `site:` result set is not an index coverage measurement. Check rendering before interpreting
+missing raw HTML content, and inspect HTTP headers and sitemaps before declaring hreflang absent.
+For preview restrictions, record the affected crawler and scope; a Bing-specific rule is not a
+Google restriction. Verify the Search generative AI control and inheritance from owner evidence;
+public inspection alone cannot establish its effective setting.
 
 ### 5. Audit content, information architecture, and languages
 
@@ -227,6 +242,16 @@ Preserve positioning. For premium, private, regulated, or specialist brands, pre
 - demonstrates first-hand expertise, evidence, or information gain;
 - has a credible owner and maintenance trigger.
 
+Review descriptive title and snippet sources, contextual link text, image alt text and surrounding
+copy, and relevant video pages. Assess authorship, editorial accountability, first-hand evidence,
+and how and why content was created. Verify AI-assisted claims and metadata; do not invent
+expert profiles. Flag scaled low-value publishing and doorway abuse without treating all AI use
+as spam. E-E-A-T is not an independently measurable Google ranking factor.
+
+Treat automated content-structure checks as observations for editorial review. Missing H2,
+meta descriptions, or an arbitrary word count do not establish low quality or low AI citability.
+Do not split pages to target guessed query fan-out variations.
+
 Do not prescribe a publishing cadence for its own sake. Freshness means keeping material facts, offers, dates, people, policies, and availability accurate when they change.
 
 ### 6. Audit structured data and the knowledge layer
@@ -243,6 +268,10 @@ Check:
 - agreement between markup, visible content, canonical source of truth, feeds, and external profiles.
 
 Do not add unsupported ratings, misleading entity types, self-serving review markup, hidden content, invented properties, or schema that the page does not substantiate. Schema can reduce ambiguity; it does not force a ranking or AI citation.
+
+Separate valid Schema.org vocabulary from currently supported Google rich results. Check the
+feature documentation before recommending markup; FAQ rich results were retired in May 2026.
+Useful visible answers can remain valuable without that feature.
 
 Design a human-readable, machine-readable knowledge layer. Keep key facts concise and elegant, especially on visually minimal or premium sites.
 
@@ -294,6 +323,10 @@ For every run record:
 | Evidence | Citations/links, source types, unsupported claims, screenshots or saved text when permitted |
 | Interpretation | Observation, limitation, reproducibility note, and next validation step |
 
+Record Google AI Overviews and AI Mode as separate observed surfaces; an absent AI Overview
+is not equivalent to an absent brand in a displayed answer. Query fan-out is a documented
+mechanism, not a set of internal queries that this audit can reconstruct.
+
 Treat results as dated samples affected by model changes, retrieval indexes, localization, personalization, randomness, and interface behavior. Repeat a stable prompt set over time; do not generalize from one run.
 
 ### 10. Synthesize findings and roadmap
@@ -344,7 +377,14 @@ Separate controllable leading indicators from outcome indicators. Choose only me
 
 **Leading indicators** may include crawl/index health, canonical accuracy, entity consistency coverage, structured-data validity, important facts present in HTML, language parity/native-quality completion, listing correction rate, and source coverage.
 
-**Outcome indicators** may include qualified organic impressions/clicks, non-branded discovery, assisted and direct conversions, local actions, relevant referring sources, review-theme consistency, AI mention rate across the fixed prompt set, factual accuracy, citation/source mix, and share of tested prompts.
+**Outcome indicators** may include organic impressions/clicks, non-branded discovery, local visibility, relevant referring sources, review-theme consistency, AI mention rate across the fixed prompt set, factual accuracy, citation/source mix, and share of tested prompts.
+
+For Google AI visibility, use the optional Generative AI performance report for supported
+impressions, with report provenance, aggregation, PT dates, and export limitations. It overlaps
+with ordinary Web reporting; never add the two totals. Missing report access is not zero
+visibility, and exported placeholder zeros require source verification. Do not invent AI clicks,
+CTR, rankings, or query data. Follow [Google measurement rules](references/google-search.md).
+Keep conversions, revenue, and user-level records outside this visibility-only workflow.
 
 Record baseline, data source, query or prompt set, date range, segment, season, target direction, review cadence, and owner. Use season-adjusted and market/language-specific comparisons. Treat AI benchmark metrics as directional samples, not guaranteed causal outcomes.
 

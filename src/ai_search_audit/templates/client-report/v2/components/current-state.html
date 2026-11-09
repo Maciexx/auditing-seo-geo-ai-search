@@ -1,0 +1,11 @@
+<section class="report-section">
+  <p class="eyebrow">{{ t.current_eyebrow }}</p>
+  <h2>{{ t.current_heading }}</h2>
+  <div class="state-grid">
+    <div class="state-card"><span>{{ t.target }}</span><strong>{{ data.target_domain }}</strong></div>
+    <div class="state-card"><span>{{ t.sitemap }}</span><strong>{{ t.sitemap_states[data.sitemap_state.value] }}</strong></div>
+    <div class="state-card"><span>{{ t.observed_ai_visibility }}</span><strong>{{ t.states[data.ai_search.observed_visibility_state.value] }}</strong></div>
+    <div class="state-card"><span>{{ t.prompt_pack }}</span><strong>{{ data.ai_search.prompt_count }} {{ t.prompts }}</strong></div>
+  </div>
+  <p class="scope-note">{{ t.unavailable_scope_note }}</p>
+</section>

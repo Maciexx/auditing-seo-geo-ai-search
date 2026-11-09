@@ -21,8 +21,8 @@ from .report_models import (
     validate_report_compatibility,
 )
 
-TEMPLATE_VERSION = "1.2.0"
-TEMPLATE_DIRECTORY_BY_VERSION = {TEMPLATE_VERSION: "v1"}
+TEMPLATE_VERSION = "1.3.0"
+TEMPLATE_DIRECTORY_BY_VERSION = {"1.2.0": "v1", TEMPLATE_VERSION: "v2"}
 TEMPLATE_DIRECTORY = TEMPLATE_DIRECTORY_BY_VERSION[TEMPLATE_VERSION]
 TEMPLATE_ROOT = Path(__file__).parent / "templates" / "client-report" / TEMPLATE_DIRECTORY
 FONT_ROOT = TEMPLATE_ROOT / "assets" / "fonts"
@@ -55,17 +55,26 @@ def _digest_files(paths: list[Path], *, root: Path) -> str:
     return digest.hexdigest()
 
 
-def _template_digest() -> str:
+def _template_root(version: str) -> Path:
+    try:
+        directory = TEMPLATE_DIRECTORY_BY_VERSION[version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported report template version: {version}") from exc
+    return TEMPLATE_ROOT.parent / directory
+
+
+def _template_digest(template_root: Path = TEMPLATE_ROOT) -> str:
     paths = [
         path
-        for path in TEMPLATE_ROOT.rglob("*")
+        for path in template_root.rglob("*")
         if path.is_file() and path.suffix in {".html", ".css", ".json"}
     ]
-    return _digest_files(paths, root=TEMPLATE_ROOT)
+    return _digest_files(paths, root=template_root)
 
 
-def _font_digest() -> str:
-    return _digest_files(list(FONT_ROOT.glob("*.ttf")), root=FONT_ROOT)
+def _font_digest(template_root: Path = TEMPLATE_ROOT) -> str:
+    font_root = template_root / "assets" / "fonts"
+    return _digest_files(list(font_root.glob("*.ttf")), root=font_root)
 
 
 def _environment_fingerprint() -> str:
@@ -82,31 +91,37 @@ def _environment_fingerprint() -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def build_renderer_metadata() -> RendererMetadata:
+def build_renderer_metadata(*, template_version: str = TEMPLATE_VERSION) -> RendererMetadata:
+    root = _template_root(template_version)
     return RendererMetadata(
         renderer="WeasyPrint",
         renderer_version=weasyprint_version,
-        template_version=TEMPLATE_VERSION,
-        template_digest=_template_digest(),
-        font_asset_digest=_font_digest(),
+        template_version=template_version,
+        template_digest=_template_digest(root),
+        font_asset_digest=_font_digest(root),
         environment_fingerprint=_environment_fingerprint(),
     )
 
 
-def local_asset_fetcher(url: str, *args: object, **kwargs: object) -> dict[str, Any]:
+def local_asset_fetcher(
+    url: str, *args: object, template_root: Path = TEMPLATE_ROOT, **kwargs: object
+) -> dict[str, Any]:
     parts = urlsplit(url)
     if parts.scheme.casefold() != "file":
         raise RenderSecurityError(f"report renderer rejected non-local resource: {url}")
     path = Path(unquote(parts.path)).resolve()
-    root = TEMPLATE_ROOT.resolve()
+    root = template_root.resolve()
     if not path.is_relative_to(root) or not path.is_file():
         raise RenderSecurityError(f"report renderer rejected uncontrolled local resource: {url}")
     return cast(dict[str, Any], default_url_fetcher(url, *args, **kwargs))
 
 
-def _jinja_environment() -> Environment:
+def _jinja_environment(template_version: str = TEMPLATE_VERSION) -> Environment:
     environment = Environment(
-        loader=PackageLoader("ai_search_audit", f"templates/client-report/{TEMPLATE_DIRECTORY}"),
+        loader=PackageLoader(
+            "ai_search_audit",
+            f"templates/client-report/{TEMPLATE_DIRECTORY_BY_VERSION[template_version]}",
+        ),
         autoescape=select_autoescape(("html", "xml")),
         undefined=StrictUndefined,
         trim_blocks=True,
@@ -122,8 +137,8 @@ def _format_number(value: float | None) -> str:
     return format(value, ".12g")
 
 
-def _translations(locale: str) -> dict[str, Any]:
-    path = TEMPLATE_ROOT / "locales" / f"{locale}.json"
+def _translations(locale: str, template_version: str = TEMPLATE_VERSION) -> dict[str, Any]:
+    path = _template_root(template_version) / "locales" / f"{locale}.json"
     if not path.is_file():
         raise ValueError(f"unsupported report locale: {locale}")
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -135,12 +150,14 @@ def _translations(locale: str) -> dict[str, Any]:
 def render_report_html(data: ClientReportData) -> str:
     if not isinstance(data, ClientReportData):
         raise TypeError("renderer accepts ClientReportData only")
-    template = _jinja_environment().get_template("report.html")
-    return template.render(data=data, t=_translations(data.report_locale))
+    template = _jinja_environment(data.report_template_version).get_template("report.html")
+    return template.render(
+        data=data, t=_translations(data.report_locale, data.report_template_version)
+    )
 
 
 def _localized_page_css(data: ClientReportData) -> CSS:
-    translations = _translations(data.report_locale)
+    translations = _translations(data.report_locale, data.report_template_version)
     footer = json.dumps(translations["footer_label"], ensure_ascii=False)
     page = json.dumps(translations["page"], ensure_ascii=False)
     return CSS(
@@ -196,22 +213,26 @@ def render_client_report(data: ClientReportData, output_path: Path) -> RenderRes
         template_version=data.report_template_version,
         renderer=data.renderer,
     )
-    current_metadata = build_renderer_metadata()
+    current_metadata = build_renderer_metadata(template_version=data.report_template_version)
     if data.renderer != current_metadata:
         raise RendererEnvironmentError(
             "ClientReportData renderer metadata does not match the active renderer environment"
         )
+    from functools import partial
+
+    root = _template_root(data.report_template_version)
+    fetcher = partial(local_asset_fetcher, template_root=root)
     html = render_report_html(data)
     identifier = _pdf_identifier(data)
     pdf = HTML(
         string=html,
-        base_url=TEMPLATE_ROOT.as_uri(),
-        url_fetcher=local_asset_fetcher,
+        base_url=root.as_uri(),
+        url_fetcher=fetcher,
     ).write_pdf(
         stylesheets=[
             CSS(
-                filename=TEMPLATE_ROOT / "styles.css",
-                url_fetcher=local_asset_fetcher,
+                filename=root / "styles.css",
+                url_fetcher=fetcher,
             ),
             _localized_page_css(data),
         ],

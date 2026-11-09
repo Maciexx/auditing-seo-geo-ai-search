@@ -9,3 +9,13 @@ rules:
     review_interval_days: 180
     confidence: 0.85
     scoring_weight: 0.75
+  - rule_id: content-structure-002
+    vendor: google-search
+    statement: Observed titles, descriptions, headings and text support editorial review of page purpose; no required H2 count, minimum length, citation readiness or quality score is inferred.
+    source_url: https://developers.google.com/search/docs/fundamentals/ai-optimization-guide
+    source_type: official_vendor_documentation_with_audit_inference
+    evidence_level: B
+    verified_at: 2026-11-09
+    review_interval_days: 180
+    confidence: 0.85
+    scoring_weight: 0
