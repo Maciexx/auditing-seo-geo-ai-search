@@ -1,0 +1,39 @@
+{% if data.project %}
+<section class="report-section project-context-section">
+  <p class="eyebrow">{{ t.project_eyebrow }}</p>
+  <h2>{{ t.project_heading }}</h2>
+  <div class="version-panel project-version-panel">
+    <div><span>{{ t.project_id }}</span><strong>{{ data.project.project_id }}</strong></div>
+    <div><span>{{ t.audit_version }}</span><strong>{{ data.project.version_id }} ({{ data.project.version_number }})</strong></div>
+    <div><span>{{ t.audit_stage }}</span><strong>{{ t.audit_stages[data.project.stage.value] }}</strong></div>
+    <div><span>{{ t.report_status }}</span><strong>{{ t.report_statuses[data.project.report_status.value] }}</strong></div>
+    {% if data.project.source_audit_id %}
+      <div><span>{{ t.source_audit }}</span><strong>{{ data.project.source_audit_id }}</strong></div>
+    {% endif %}
+  </div>
+  {% if data.owner_context %}
+    <h3>{{ t.owner_facts }}</h3>
+    {% if data.owner_context.facts %}
+      <table class="context-table">
+        <thead><tr><th>{{ t.fact }}</th><th>{{ t.value }}</th><th>{{ t.approval }}</th><th>{{ t.conflicts }}</th><th>{{ t.source }}</th></tr></thead>
+        <tbody>
+        {% for fact in data.owner_context.facts %}
+          <tr>
+            <td>{{ t.owner_fact_fields[fact.field] }}</td>
+            <td>{% if fact.value is none %}{{ t.states.UNKNOWN }}{% else %}{{ fact.value }}{% endif %}</td>
+            <td>{{ t.approval_states[fact.approval_state.value] }}</td>
+            <td>
+              {% if fact.conflict_ids %}{{ fact.conflict_ids | join(", ") }}{% else %}{{ t.none }}{% endif %}
+              {% if fact.resolved_conflict_ids %}<br>{{ t.resolved }}: {{ fact.resolved_conflict_ids | join(", ") }}{% endif %}
+            </td>
+            <td>{{ fact.provenance.source_id }}<br><span class="muted-detail">{{ fact.provenance.report_type }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty-state">{{ t.owner_facts_empty }}</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endif %}

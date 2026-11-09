@@ -49,12 +49,38 @@
       "source": "Właściciel projektu",
       "exact_report": "Dane kanoniczne, rynki i języki docelowe, sezonowość, kontrolowane profile, konkurenci, nierozstrzygnięte sprzeczności i znane daty wdrożeń",
       "date_range": "Bieżący okres audytu",
-      "metrics": ["Bez danych ilościowych"],
-      "dimensions": ["Dane kanoniczne", "Oferta publiczna", "Priorytetowy temat", "Język docelowy", "Rynek docelowy", "Sezonowość", "Kontrolowany profil", "Konkurent", "Nierozstrzygnięta sprzeczność", "Znana data wdrożenia"],
-      "filters": ["Wyłącznie publiczny zakres widoczności w wyszukiwaniu", "Tylko profile kontrolowane przez organizację", "Nierozstrzygnięte sprzeczności oznaczone bez wybierania niepotwierdzonej wersji"],
-      "preferred_formats": ["DOCX", "PDF", "CSV"],
+      "metrics": [
+        "Bez danych ilościowych"
+      ],
+      "dimensions": [
+        "Dane kanoniczne",
+        "Oferta publiczna",
+        "Priorytetowy temat",
+        "Język docelowy",
+        "Rynek docelowy",
+        "Sezonowość",
+        "Kontrolowany profil",
+        "Konkurent",
+        "Nierozstrzygnięta sprzeczność",
+        "Znana data wdrożenia"
+      ],
+      "filters": [
+        "Wyłącznie publiczny zakres widoczności w wyszukiwaniu",
+        "Tylko profile kontrolowane przez organizację",
+        "Nierozstrzygnięte sprzeczności oznaczone bez wybierania niepotwierdzonej wersji"
+      ],
+      "preferred_formats": [
+        "DOCX",
+        "PDF",
+        "CSV"
+      ],
       "rationale": "Potwierdza dane kanoniczne i kontekst porównania, które powinny być reprezentowane przez dane o widoczności, w tym sezonowość i datowane zmiany w serwisie.",
-      "export_instructions": ["Proszę przygotować krótki plik na podstawie istniejących materiałów i podać, kiedy wdrożono każdą znaną zmianę.", "Kontrolowane profile i wskazanych konkurentów należy wymienić osobno.", "Nierozstrzygnięte sprzeczności należy pozostawić widoczne do weryfikacji.", "Jeśli źródłem jest Arkusz Google, należy wyeksportować go jako XLSX lub CSV zamiast udostępniać połączony arkusz."],
+      "export_instructions": [
+        "Proszę przygotować krótki plik na podstawie istniejących materiałów i podać, kiedy wdrożono każdą znaną zmianę.",
+        "Kontrolowane profile i wskazanych konkurentów należy wymienić osobno.",
+        "Nierozstrzygnięte sprzeczności należy pozostawić widoczne do weryfikacji.",
+        "Jeśli źródłem jest Arkusz Google, należy wyeksportować go jako XLSX lub CSV zamiast udostępniać połączony arkusz."
+      ],
       "anonymization": "Należy usunąć dane osobowe i notatki wewnętrzne, które nie są potrzebne do określenia publicznego zakresu.",
       "condition": "Należy przekazać zawsze, jeśli te informacje są dostępne.",
       "claim_supported": "Audytowane tematy, języki i rynki odpowiadają publicznemu zakresowi wskazanemu przez właściciela."
@@ -65,12 +91,34 @@
       "source": "Google Search Console",
       "exact_report": "Skuteczność > Wyniki wyszukiwania",
       "date_range": "Maksymalnie ostatnie 16 miesięcy",
-      "metrics": ["Kliknięcia", "Wyświetlenia", "CTR", "Średnia pozycja"],
-      "dimensions": ["Zapytanie", "Strona", "Data", "Kraj", "Urządzenie", "Wygląd w wyszukiwarce"],
-      "filters": ["Typ wyszukiwania: Sieć", "Inne istotne typy wyszukiwania, takie jak Grafika, Wideo lub Wiadomości, w osobnych eksportach", "Usługa domenowa, jeśli jest dostępna"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Kliknięcia",
+        "Wyświetlenia",
+        "CTR",
+        "Średnia pozycja"
+      ],
+      "dimensions": [
+        "Zapytanie",
+        "Strona",
+        "Data",
+        "Kraj",
+        "Urządzenie",
+        "Wygląd w wyszukiwarce"
+      ],
+      "filters": [
+        "Typ wyszukiwania: Sieć",
+        "Inne istotne typy wyszukiwania, takie jak Grafika, Wideo lub Wiadomości, w osobnych eksportach",
+        "Usługa domenowa, jeśli jest dostępna"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Pozwala porównać trendy widoczności według zapytania, strony, rynku i urządzenia w najdłuższym obsługiwanym okresie.",
-      "export_instructions": ["Każdy wymagany wymiar i typ wyszukiwania należy wyeksportować do osobnego pliku strukturalnego.", "Zwykły eksport z interfejsu Search Console zawiera do 1,000 reprezentatywnych wierszy; jeśli ogranicza to pokrycie, należy wyraźnie opisać ten limit."],
+      "export_instructions": [
+        "Każdy wymagany wymiar i typ wyszukiwania należy wyeksportować do osobnego pliku strukturalnego.",
+        "Zwykły eksport z interfejsu Search Console zawiera do 1,000 reprezentatywnych wierszy; jeśli ogranicza to pokrycie, należy wyraźnie opisać ten limit."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć wiersze zapytań lub stron zawierające dane osobowe.",
       "condition": "Należy przekazać zawsze, jeśli usługa zawiera dane.",
       "claim_supported": "Widoczność organiczna w Google zmieniła się według zapytania, strony docelowej, rynku lub urządzenia w okresie porównawczym."
@@ -81,12 +129,30 @@
       "source": "Google Search Console",
       "exact_report": "Indeksowanie > Strony > Indeksowanie stron",
       "date_range": "Bieżący stan i dostępna historia, maksymalnie 16 miesięcy",
-      "metrics": ["Strony zindeksowane", "Strony niezindeksowane"],
-      "dimensions": ["Powód stanu indeksowania", "Stan weryfikacji", "Źródło wykrycia", "Mapa witryny", "Przykładowy URL"],
-      "filters": ["Wszystkie znane strony audytowanej domeny kanonicznej", "Osobne stany stron zindeksowanych i niezindeksowanych"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Strony zindeksowane",
+        "Strony niezindeksowane"
+      ],
+      "dimensions": [
+        "Powód stanu indeksowania",
+        "Stan weryfikacji",
+        "Źródło wykrycia",
+        "Mapa witryny",
+        "Przykładowy URL"
+      ],
+      "filters": [
+        "Wszystkie znane strony audytowanej domeny kanonicznej",
+        "Osobne stany stron zindeksowanych i niezindeksowanych"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Odróżnia ograniczenia widoczności wynikające ze stanu indeksowania od zmian popytu w wyszukiwaniu.",
-      "export_instructions": ["Podsumowanie i każdą tabelę powodów indeksowania należy wyeksportować osobno.", "Dla każdego istotnego powodu należy dołączyć reprezentatywne przykładowe adresy URL."],
+      "export_instructions": [
+        "Podsumowanie i każdą tabelę powodów indeksowania należy wyeksportować osobno.",
+        "Dla każdego istotnego powodu należy dołączyć reprezentatywne przykładowe adresy URL."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć prywatne adresy URL i adresy zawierające dane osobowe.",
       "condition": "Należy przekazać zawsze, jeśli usługa zawiera dane o indeksowaniu.",
       "claim_supported": "Istotne grupy publicznych stron są indeksowane lub wykluczone z powodów widocznych w Search Console."
@@ -97,12 +163,28 @@
       "source": "Google Search Console",
       "exact_report": "Indeksowanie > Mapy witryny",
       "date_range": "Bieżący stan",
-      "metrics": ["Wykryte strony", "Wykryte filmy"],
-      "dimensions": ["URL mapy witryny", "Typ mapy witryny", "Data przesłania", "Data ostatniego odczytu", "Stan"],
-      "filters": ["Przesłane mapy witryny audytowanej domeny kanonicznej"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Wykryte strony",
+        "Wykryte filmy"
+      ],
+      "dimensions": [
+        "URL mapy witryny",
+        "Typ mapy witryny",
+        "Data przesłania",
+        "Data ostatniego odczytu",
+        "Stan"
+      ],
+      "filters": [
+        "Przesłane mapy witryny audytowanej domeny kanonicznej"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Pokazuje, czy zadeklarowane publiczne zbiory adresów URL są aktualne, czytelne i zgodne z danymi o indeksowaniu.",
-      "export_instructions": ["Należy wyeksportować pełną tabelę map witryny ze stanem, datami i liczbą wykrytych elementów."],
+      "export_instructions": [
+        "Należy wyeksportować pełną tabelę map witryny ze stanem, datami i liczbą wykrytych elementów."
+      ],
       "anonymization": "Należy usunąć ścieżki map witryny ujawniające środowiska prywatne lub tokeny.",
       "condition": "Należy przekazać zawsze, jeśli przesłano co najmniej jedną mapę witryny.",
       "claim_supported": "Przesłane mapy witryny są aktualne, czytelne i reprezentują publiczny zbiór adresów URL."
@@ -113,12 +195,31 @@
       "source": "Google Search Console",
       "exact_report": "Jakość > Podstawowe wskaźniki internetowe",
       "date_range": "Bieżący stan i dostępna historia, maksymalnie 16 miesięcy",
-      "metrics": ["Słabe adresy URL", "Adresy URL wymagające poprawy", "Dobre adresy URL"],
-      "dimensions": ["Urządzenie mobilne lub komputer", "Stan", "Metryka", "Grupa adresów URL", "Przykładowy URL"],
-      "filters": ["Osobne dane dla urządzeń mobilnych i komputerów", "Wyłącznie audytowana domena kanoniczna"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Słabe adresy URL",
+        "Adresy URL wymagające poprawy",
+        "Dobre adresy URL"
+      ],
+      "dimensions": [
+        "Urządzenie mobilne lub komputer",
+        "Stan",
+        "Metryka",
+        "Grupa adresów URL",
+        "Przykładowy URL"
+      ],
+      "filters": [
+        "Osobne dane dla urządzeń mobilnych i komputerów",
+        "Wyłącznie audytowana domena kanoniczna"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Wspiera wnioski o widoczności i jakości stron stanem danych terenowych dla grup adresów zamiast pojedynczymi testami laboratoryjnymi.",
-      "export_instructions": ["Podsumowania dla urządzeń mobilnych i komputerów należy wyeksportować osobno.", "Należy dołączyć problem LCP, INP lub CLS i reprezentatywne grupy adresów URL."],
+      "export_instructions": [
+        "Podsumowania dla urządzeń mobilnych i komputerów należy wyeksportować osobno.",
+        "Należy dołączyć problem LCP, INP lub CLS i reprezentatywne grupy adresów URL."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć prywatne adresy URL i adresy zawierające dane osobowe.",
       "condition": "Należy przekazać zawsze, jeśli dostępne są dane terenowe podstawowych wskaźników internetowych.",
       "claim_supported": "Publiczne grupy adresów URL mają wskazany stan podstawowych wskaźników internetowych na urządzeniach mobilnych lub komputerach."
@@ -129,12 +230,31 @@
       "source": "Google Search Console",
       "exact_report": "Ustawienia > Statystyki indeksowania",
       "date_range": "Ostatnie 90 dni",
-      "metrics": ["Łączna liczba żądań indeksowania", "Łączny rozmiar pobranych danych", "Średni czas reakcji"],
-      "dimensions": ["Host", "Odpowiedź", "Typ pliku", "Cel indeksowania", "Typ Googlebota", "Data"],
-      "filters": ["Audytowana usługa domeny kanonicznej", "Osobne hosty i typy robotów"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Łączna liczba żądań indeksowania",
+        "Łączny rozmiar pobranych danych",
+        "Średni czas reakcji"
+      ],
+      "dimensions": [
+        "Host",
+        "Odpowiedź",
+        "Typ pliku",
+        "Cel indeksowania",
+        "Typ Googlebota",
+        "Data"
+      ],
+      "filters": [
+        "Audytowana usługa domeny kanonicznej",
+        "Osobne hosty i typy robotów"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Pokazuje, czy dostępność hosta, wzorce odpowiedzi lub przydział pracy robotów ograniczają wykrywanie publicznych stron.",
-      "export_instructions": ["Trend w czasie i każdy podział żądań indeksowania należy wyeksportować do osobnych plików strukturalnych."],
+      "export_instructions": [
+        "Trend w czasie i każdy podział żądań indeksowania należy wyeksportować do osobnych plików strukturalnych."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć prywatne nazwy hostów i przykładowe adresy URL.",
       "condition": "Należy przekazać zawsze, jeśli statystyki indeksowania są dostępne.",
       "claim_supported": "Googlebot docierał do audytowanych hostów zgodnie ze wskazanym wzorcem odpowiedzi i przydziału pracy."
@@ -145,12 +265,29 @@
       "source": "Google Analytics 4",
       "exact_report": "Raporty > Pozyskiwanie > Pozyskiwanie ruchu oraz trend stron docelowych",
       "date_range": "Maksymalnie ostatnie 16 miesięcy",
-      "metrics": ["Sesje", "Użytkownicy"],
-      "dimensions": ["Data", "Strona docelowa", "Źródło/medium sesji", "Domyślna grupa kanałów sesji"],
-      "filters": ["Domyślna grupa kanałów sesji dokładnie Organic Search", "Dane oddzielone od ruchu AI Assistant"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Sesje",
+        "Użytkownicy"
+      ],
+      "dimensions": [
+        "Data",
+        "Strona docelowa",
+        "Źródło/medium sesji",
+        "Domyślna grupa kanałów sesji"
+      ],
+      "filters": [
+        "Domyślna grupa kanałów sesji dokładnie Organic Search",
+        "Dane oddzielone od ruchu AI Assistant"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Pokazuje ruch z wyszukiwania i trendy stron docelowych bez mieszania innych kanałów lub wyników biznesowych.",
-      "export_instructions": ["Trend w czasie i tabelę stron docelowych należy wyeksportować osobno.", "Jako metryki należy pozostawić wyłącznie sesje i użytkowników."],
+      "export_instructions": [
+        "Trend w czasie i tabelę stron docelowych należy wyeksportować osobno.",
+        "Jako metryki należy pozostawić wyłącznie sesje i użytkowników."
+      ],
       "anonymization": "Należy usunąć identyfikatory użytkowników i zachować wyłącznie zagregowane wiersze.",
       "condition": "Należy przekazać zawsze, jeśli usługa zawiera dane.",
       "claim_supported": "Sesje, użytkownicy i widoczność stron docelowych z Organic Search zmieniły się w okresie porównawczym."
@@ -161,12 +298,28 @@
       "source": "Google Analytics 4",
       "exact_report": "Eksploracja pozyskiwania ruchu z grupowaniem źródeł AI Assistant",
       "date_range": "Maksymalnie ostatnie 16 miesięcy",
-      "metrics": ["Sesje", "Użytkownicy"],
-      "dimensions": ["Data", "Strona docelowa", "Źródło/medium sesji"],
-      "filters": ["Wyłącznie źródła odsyłające AI Assistant", "Bez wierszy kanału Organic Search"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Sesje",
+        "Użytkownicy"
+      ],
+      "dimensions": [
+        "Data",
+        "Strona docelowa",
+        "Źródło/medium sesji"
+      ],
+      "filters": [
+        "Wyłącznie źródła odsyłające AI Assistant",
+        "Bez wierszy kanału Organic Search"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Ustala odrębny poziom bazowy ruchu z narzędzi AI bez łączenia go z Organic Search.",
-      "export_instructions": ["Trend w czasie i tabelę stron docelowych należy wyeksportować osobno.", "Eksport z zerową liczbą wierszy lub sesji jest prawidłowym poziomem bazowym i należy go przekazać, a nie uznawać za brak danych."],
+      "export_instructions": [
+        "Trend w czasie i tabelę stron docelowych należy wyeksportować osobno.",
+        "Eksport z zerową liczbą wierszy lub sesji jest prawidłowym poziomem bazowym i należy go przekazać, a nie uznawać za brak danych."
+      ],
       "anonymization": "Należy usunąć identyfikatory użytkowników i zachować wyłącznie zagregowane wiersze.",
       "condition": "Należy przekazać zawsze, również przy prawidłowym zerowym poziomie bazowym.",
       "claim_supported": "Widoczność AI Assistant ma zmierzony dodatni lub zerowy poziom bazowy, odrębny od Organic Search."
@@ -177,12 +330,31 @@
       "source": "Google Merchant Center",
       "exact_report": "Raport skuteczności oraz diagnostyka Wymaga uwagi",
       "date_range": "Ostatnie 12 miesięcy lub najdłuższy dostępny okres",
-      "metrics": ["Wyświetlenia produktów (impressions)", "Kliknięcia produktów (clicks)", "CTR produktów"],
-      "dimensions": ["Produkt", "Kraj", "Metoda ruchu", "Problem z produktem", "Problem z kontem"],
-      "filters": ["Ruch płatny oddzielony od ruchu bezpłatnego", "Produkty aktywne i objęte problemami"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Wyświetlenia produktów (impressions)",
+        "Kliknięcia produktów (clicks)",
+        "CTR produktów"
+      ],
+      "dimensions": [
+        "Produkt",
+        "Kraj",
+        "Metoda ruchu",
+        "Problem z produktem",
+        "Problem z kontem"
+      ],
+      "filters": [
+        "Ruch płatny oddzielony od ruchu bezpłatnego",
+        "Produkty aktywne i objęte problemami"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Łączy widoczność produktów z ograniczeniami kanału produktowego i konta.",
-      "export_instructions": ["Należy wyeksportować skuteczność według produktu i kraju.", "Problemy z produktami i problemy z kontem należy wyeksportować do osobnych plików strukturalnych."],
+      "export_instructions": [
+        "Należy wyeksportować skuteczność według produktu i kraju.",
+        "Problemy z produktami i problemy z kontem należy wyeksportować do osobnych plików strukturalnych."
+      ],
       "anonymization": "Należy usunąć notatki dostawców i dane osobowe, które nie są potrzebne do diagnostyki produktów.",
       "condition": "Należy przekazać tylko dla sklepu internetowego z danymi Merchant Center.",
       "claim_supported": null
@@ -193,12 +365,33 @@
       "source": "Profil Firmy w Google",
       "exact_report": "Dane profilu, Skuteczność i aktualizacje Google",
       "date_range": "Ostatnie 12 miesięcy lub najdłuższy dostępny okres",
-      "metrics": ["Wyświetlenia", "Wyszukiwania", "Kliknięcia w witrynę"],
-      "dimensions": ["Dane profilu", "Kategorie", "Lokalizacje", "Data", "Aktualizacje Google"],
-      "filters": ["Wszystkie audytowane lokalizacje", "Osobne wiersze dla lokalizacji"],
-      "preferred_formats": ["CSV", "XLSX", "PDF", "Zrzuty ekranu"],
+      "metrics": [
+        "Wyświetlenia",
+        "Wyszukiwania",
+        "Kliknięcia w witrynę"
+      ],
+      "dimensions": [
+        "Dane profilu",
+        "Kategorie",
+        "Lokalizacje",
+        "Data",
+        "Aktualizacje Google"
+      ],
+      "filters": [
+        "Wszystkie audytowane lokalizacje",
+        "Osobne wiersze dla lokalizacji"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX",
+        "PDF",
+        "Zrzuty ekranu"
+      ],
       "rationale": "Sprawdza zgodność danych profilu i zmian Google z widocznością w wyszukiwaniu lokalnym.",
-      "export_instructions": ["Tam, gdzie to możliwe, należy wyeksportować strukturalne tabele skuteczności.", "PDF lub zrzuty ekranu należy stosować tylko dla danych profilu albo aktualizacji Google bez eksportu strukturalnego."],
+      "export_instructions": [
+        "Tam, gdzie to możliwe, należy wyeksportować strukturalne tabele skuteczności.",
+        "PDF lub zrzuty ekranu należy stosować tylko dla danych profilu albo aktualizacji Google bez eksportu strukturalnego."
+      ],
       "anonymization": "Należy usunąć dane osobowe autorów opinii i pracowników, które nie są potrzebne do oceny widoczności.",
       "condition": "Należy przekazać tylko dla firmy lokalnej z co najmniej jednym Profilem Firmy.",
       "claim_supported": null
@@ -209,12 +402,33 @@
       "source": "Bing Webmaster Tools",
       "exact_report": "Skuteczność wyszukiwania, inspekcja adresów URL, mapy witryny i problemy crawlowania",
       "date_range": "Ostatnie 12 miesięcy lub najdłuższy dostępny okres",
-      "metrics": ["Kliknięcia", "Wyświetlenia", "CTR", "Średnia pozycja"],
-      "dimensions": ["Zapytania", "Strony", "Data", "Stan indeksowania", "Mapy witryny", "Problemy crawlowania"],
-      "filters": ["Wyłącznie audytowana domena kanoniczna"],
-      "preferred_formats": ["CSV", "XLSX", "JSON"],
+      "metrics": [
+        "Kliknięcia",
+        "Wyświetlenia",
+        "CTR",
+        "Średnia pozycja"
+      ],
+      "dimensions": [
+        "Zapytania",
+        "Strony",
+        "Data",
+        "Stan indeksowania",
+        "Mapy witryny",
+        "Problemy crawlowania"
+      ],
+      "filters": [
+        "Wyłącznie audytowana domena kanoniczna"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX",
+        "JSON"
+      ],
       "rationale": "Dodaje obraz skuteczności, indeksowania, map witryny i ograniczeń crawlowania z drugiej wyszukiwarki.",
-      "export_instructions": ["Należy wyeksportować skuteczność z podziałem na zapytania i strony.", "Listy indeksowania, map witryny i problemów crawlowania należy wyeksportować osobno."],
+      "export_instructions": [
+        "Należy wyeksportować skuteczność z podziałem na zapytania i strony.",
+        "Listy indeksowania, map witryny i problemów crawlowania należy wyeksportować osobno."
+      ],
       "anonymization": "Przed przekazaniem plików należy usunąć dane osobowe z wierszy zapytań lub adresów URL.",
       "condition": "Należy przekazać tylko wtedy, gdy Bing Webmaster Tools jest już używany i eksporty są dostępne.",
       "claim_supported": null
@@ -225,12 +439,28 @@
       "source": "Istniejące logi serwera WWW lub warstwy brzegowej",
       "exact_report": "Zanonimizowane żądania rozpoznanych robotów wyszukiwarek",
       "date_range": "Ostatnie 30–90 dni",
-      "metrics": ["Liczba żądań", "Liczba kodów HTTP"],
-      "dimensions": ["Data", "Rodzina robota", "Znormalizowana ścieżka", "Kod HTTP"],
-      "filters": ["Wyłącznie rozpoznane roboty wyszukiwarek", "Wyłącznie audytowany host"],
-      "preferred_formats": ["CSV", "JSON"],
+      "metrics": [
+        "Liczba żądań",
+        "Liczba kodów HTTP"
+      ],
+      "dimensions": [
+        "Data",
+        "Rodzina robota",
+        "Znormalizowana ścieżka",
+        "Kod HTTP"
+      ],
+      "filters": [
+        "Wyłącznie rozpoznane roboty wyszukiwarek",
+        "Wyłącznie audytowany host"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "JSON"
+      ],
       "rationale": "Może potwierdzić, czy roboty wyszukiwarek docierają do ważnych publicznych ścieżek.",
-      "export_instructions": ["Należy przekazać wyłącznie istniejący, zanonimizowany eksport zbiorczy."],
+      "export_instructions": [
+        "Należy przekazać wyłącznie istniejący, zanonimizowany eksport zbiorczy."
+      ],
       "anonymization": "Należy usunąć adresy IP, pliki cookie, wartości zapytań, identyfikatory osobowe i prywatne ścieżki; jeśli to możliwe, dane trzeba zagregować.",
       "condition": "Należy przekazać tylko wtedy, gdy zanonimizowany eksport już istnieje lub można go bezpiecznie przygotować.",
       "claim_supported": null
@@ -241,12 +471,30 @@
       "source": "Istniejące narzędzie crawlujące",
       "exact_report": "Eksport adresów HTML, kodów odpowiedzi, indeksowalności, kanoniczności i linkowania wewnętrznego",
       "date_range": "Najnowszy reprezentatywny crawl",
-      "metrics": ["Liczba linków wewnętrznych", "Głębokość", "Czas odpowiedzi"],
-      "dimensions": ["URL", "Kod HTTP", "Indeksowalność", "Adres kanoniczny", "Typ treści"],
-      "filters": ["Audytowana domena kanoniczna", "HTML i istotne przekierowania"],
-      "preferred_formats": ["CSV", "XLSX"],
+      "metrics": [
+        "Liczba linków wewnętrznych",
+        "Głębokość",
+        "Czas odpowiedzi"
+      ],
+      "dimensions": [
+        "URL",
+        "Kod HTTP",
+        "Indeksowalność",
+        "Adres kanoniczny",
+        "Typ treści"
+      ],
+      "filters": [
+        "Audytowana domena kanoniczna",
+        "HTML i istotne przekierowania"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
       "rationale": "Daje techniczny obraz widoczności w konkretnym momencie do porównania z crawlem audytowym.",
-      "export_instructions": ["Należy wyeksportować istniejący crawl do pliku strukturalnego; nie trzeba uruchamiać nowego crawla wyłącznie na potrzeby tej prośby."],
+      "export_instructions": [
+        "Należy wyeksportować istniejący crawl do pliku strukturalnego; nie trzeba uruchamiać nowego crawla wyłącznie na potrzeby tej prośby."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć hosty testowe, prywatne adresy URL, tokeny i dane osobowe.",
       "condition": "Należy przekazać tylko wtedy, gdy istnieje odpowiedni eksport z crawla.",
       "claim_supported": null
@@ -257,14 +505,97 @@
       "source": "Istniejące narzędzie monitoringu widoczności AI",
       "exact_report": "Eksport obserwacji według promptu, silnika, daty, cytowania i cytowanego adresu URL",
       "date_range": "Najdłuższy dostępny porównywalny okres",
-      "metrics": ["Zaobserwowane wzmianki", "Zaobserwowane cytowania"],
-      "dimensions": ["Data", "Silnik", "Prompt", "Rynek", "Język", "Cytowany URL"],
-      "filters": ["Wyłącznie audytowany podmiot i publiczna domena"],
-      "preferred_formats": ["CSV", "XLSX", "JSON"],
+      "metrics": [
+        "Zaobserwowane wzmianki",
+        "Zaobserwowane cytowania"
+      ],
+      "dimensions": [
+        "Data",
+        "Silnik",
+        "Prompt",
+        "Rynek",
+        "Język",
+        "Cytowany URL"
+      ],
+      "filters": [
+        "Wyłącznie audytowany podmiot i publiczna domena"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX",
+        "JSON"
+      ],
       "rationale": "Dodaje dane historyczne, jeśli organizacja już monitoruje widoczność w wyszukiwaniu AI.",
-      "export_instructions": ["Należy wyeksportować istniejącą tabelę obserwacji wraz z definicjami promptów i rynków."],
+      "export_instructions": [
+        "Należy wyeksportować istniejącą tabelę obserwacji wraz z definicjami promptów i rynków."
+      ],
       "anonymization": "Przed przekazaniem eksportu należy usunąć tożsamości użytkowników, prywatne prompty i niezwiązane podmioty.",
       "condition": "Należy przekazać tylko wtedy, gdy monitoring widoczności AI jest już używany i istnieje eksport.",
+      "claim_supported": null
+    },
+    {
+      "item_id": "google_search_generative_ai",
+      "title": "Wyświetlenia generatywnego AI Google Search",
+      "source": "Google Search Console",
+      "exact_report": "Generative AI performance report (Search)",
+      "date_range": "Dostępny okres porównania; daty w Pacific Time (America/Los_Angeles)",
+      "metrics": [
+        "Wyłącznie wyświetlenia"
+      ],
+      "dimensions": [
+        "Strona",
+        "Data",
+        "Kraj",
+        "Urządzenie"
+      ],
+      "filters": [
+        "Web tekstowe lub multimodalne, oddzielne eksporty",
+        "Jawna agregacja właściwości lub strony"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
+      "rationale": "Raportuje wyświetlenia AI Overviews i AI Mode zawarte również w Web; nie dodawać sum.",
+      "export_instructions": [
+        "Podaj właściwość, nazwę raportu, typ wyszukiwania, agregację, filtry, okres i ograniczenia eksportu.",
+        "Zera w eksporcie mogą zastępować niedostępne ~ lub -. Dołącz kontekst interfejsu; niepewne zera normalizuj jako UNKNOWN bez punktów liczbowych.",
+        "Nie dopisuj kliknięć, CTR, pozycji ani zapytań AI na podstawie tego raportu."
+      ],
+      "anonymization": "Przed przekazaniem eksportu należy usunąć wiersze zapytań lub stron zawierające dane osobowe.",
+      "condition": "Opcjonalnie, jeśli raport istnieje; brak raportu lub zbyt mała liczba wyświetleń nie oznacza zera.",
+      "claim_supported": null
+    },
+    {
+      "item_id": "google_search_ai_control",
+      "title": "Udział w generatywnym AI Google Search",
+      "source": "Właściciel właściwości",
+      "exact_report": "Search Console > Ustawienia > Search generative AI",
+      "date_range": "Bieżące ustawienie z datą",
+      "metrics": [
+        "Bez metryki liczbowej"
+      ],
+      "dimensions": [
+        "Właściwość",
+        "Wybrane include/exclude/inherit",
+        "Efektywne include/exclude",
+        "Właściwość nadrzędna przy dziedziczeniu"
+      ],
+      "filters": [
+        "Wyłącznie dowód zatwierdzony przez właściciela"
+      ],
+      "preferred_formats": [
+        "CSV",
+        "XLSX"
+      ],
+      "rationale": "Oddziela decyzję właściciela od dostępu crawlerów i treningu modeli.",
+      "export_instructions": [
+        "Dołącz datowany zrzut lub oświadczenie: właściwość, wybrane i efektywne ustawienie oraz rodzica przy dziedziczeniu.",
+        "Normalizuj jako zatwierdzone fakty właściciela search_ai_property, search_ai_selected, search_ai_effective i search_ai_parent ze wspólną datą as_of oraz pochodzeniem źródła.",
+        "Bez kompletu dowodów zachowaj UNKNOWN; nie wnioskuj z robots.txt. Google-Extended nie steruje obecnością ani rankingiem w Google Search."
+      ],
+      "anonymization": "Przed przekazaniem eksportu należy usunąć wiersze zapytań lub stron zawierające dane osobowe.",
+      "condition": "Opcjonalnie, gdy właściciel może zweryfikować ustawienie.",
       "claim_supported": null
     }
   ]

@@ -69,7 +69,10 @@ def analyze_pages(
     for page in pages:
         url = str(page.final_url)
         evidence_ids = evidence_by_url.get(url, [])
-        if "noindex" in page.robots_directives:
+        google_directives = (
+            page.google_robots_directives if page.google_robots_directives is not None else []
+        )
+        if "noindex" in google_directives:
             rule = registry.resolve("google-noindex-001", as_of=as_of)
             findings.append(
                 Finding(
@@ -80,12 +83,13 @@ def analyze_pages(
                     rule_id="google-noindex-001",
                     technical_title="Indexable-content candidate contains noindex",
                     technical_description=f"{url} contains a noindex robots directive.",
-                    client_title="A page is hidden from search",
+                    client_title="A page declares a Google noindex instruction",
                     client_explanation=(
                         "The page tells search systems not to include it in results."
                     ),
                     business_impact=(
-                        "The page cannot be discovered through search while the directive remains."
+                        "Google can apply noindex only when it can crawl and read the directive; "
+                        "observed markup does not confirm current index status."
                     ),
                     implementation=(
                         "Confirm intent, then remove noindex if this page should be discoverable."
@@ -102,6 +106,69 @@ def analyze_pages(
                             evidence_ids=evidence_ids,
                             modality=ClaimModality.OBSERVED,
                             meaning=f"{url} declares the noindex robots directive.",
+                        )
+                    ],
+                    **_rule_fields(rule),
+                )
+            )
+        previews = [
+            item
+            for item in google_directives
+            if item == "nosnippet" or re.fullmatch(r"max-snippet:\s*\d+", item)
+        ]
+        if previews or page.data_nosnippet_count:
+            rule = registry.resolve("google-preview-controls-001", as_of=as_of)
+            findings.append(
+                Finding(
+                    finding_id=_finding_id(rule.rule_id, url),
+                    category="google_preview_controls",
+                    severity=Severity.INFO,
+                    status=_status_for_rule(
+                        FindingStatus.CONFIRMED if evidence_ids else FindingStatus.INFERRED, rule
+                    ),
+                    rule_id=rule.rule_id,
+                    technical_title="Google preview controls observed",
+                    technical_description=(
+                        f"Directives: {previews}; "
+                        f"data-nosnippet elements: {page.data_nosnippet_count}."
+                    ),
+                    client_title="The page limits Google content previews",
+                    client_explanation=(
+                        "Google-scoped controls were observed in the captured response. "
+                    ),
+                    business_impact=(
+                        "nosnippet prevents direct use in AI Overviews and AI "
+                        "Mode; max-snippet limits text and data-nosnippet "
+                        "excludes marked sections. Separate permissions and "
+                        "structured data can create exceptions. This does not "
+                        "establish current appearance or guarantee exclusion "
+                        "everywhere. "
+                    ),
+                    implementation=(
+                        "Confirm publishing intent. Google must crawl the page "
+                        "to read these controls; check rendered output and owner "
+                        "settings before changing anything. "
+                    ),
+                    priority=Priority.P2,
+                    affected_urls=[url],
+                    evidence_ids=evidence_ids,
+                    confidence=min(0.95, rule.confidence),
+                    factual_claims=[
+                        FactualClaim(
+                            claim_id=f"{_finding_id(rule.rule_id, url)}-controls",
+                            predicate="google.preview_controls.observed",
+                            value=(
+                                f"{previews}; data-nosnippet elements: {page.data_nosnippet_count}"
+                            ),
+                            evidence_ids=evidence_ids,
+                            numbers=sorted(
+                                set(re.findall(r"\d+", " ".join(previews)))
+                                | {str(page.data_nosnippet_count)}
+                            ),
+                            modality=ClaimModality.OBSERVED,
+                            meaning=(
+                                "Google preview controls were observed in the captured response. "
+                            ),
                         )
                     ],
                     **_rule_fields(rule),
@@ -158,7 +225,7 @@ def analyze_pages(
                 )
             )
     findings.extend(_analyze_json_ld(pages, evidence, registry, as_of=as_of))
-    findings.extend(_analyze_content_citability(pages, evidence, registry, as_of=as_of))
+    findings.extend(_analyze_content_structure(pages, evidence, registry, as_of=as_of))
     findings.extend(_analyze_sitemap_state(sitemap_state, evidence, registry, as_of=as_of))
     findings.extend(analyze_search_access(evidence, registry, as_of=as_of))
     findings.extend(analyze_ai_search_access(evidence, registry, as_of=as_of))
@@ -316,7 +383,7 @@ def _analyze_json_ld(
     return findings
 
 
-def _analyze_content_citability(
+def _analyze_content_structure(
     pages: list[Page],
     evidence: list[Evidence],
     registry: KnowledgeRegistry,
@@ -330,15 +397,15 @@ def _analyze_content_citability(
             missing.append("descriptive title")
         if not page.meta_description:
             missing.append("page summary")
-        if not page.h1 or not page.h2:
+        if not page.h1:
             missing.append("heading structure")
-        if len(page.content_text) < 100:
-            missing.append("substantive public text")
+        if not page.content_text.strip():
+            missing.append("public text")
         if missing:
             failures[str(page.final_url)] = missing
     if not failures:
         return []
-    rule = registry.resolve("content-citability-001", as_of=as_of)
+    rule = registry.resolve("content-structure-002", as_of=as_of)
     evidence_ids = sorted(
         {
             evidence_id
@@ -348,34 +415,35 @@ def _analyze_content_citability(
         }
     )
     missing_signals = sorted({signal for values in failures.values() for signal in values})
-    finding_id = _finding_id("content-citability-001", "assessed-content-gaps")
+    finding_id = _finding_id("content-structure-002", "assessed-content-gaps")
     return [
         Finding(
             finding_id=finding_id,
-            category="content_citability",
+            category="content_structure",
             severity=Severity.LOW,
             status=_status_for_rule(
                 FindingStatus.CONFIRMED if evidence_ids else FindingStatus.INFERRED,
                 rule,
             ),
-            rule_id="content-citability-001",
-            technical_title="Observable content-citability checks are incomplete",
+            rule_id="content-structure-002",
+            technical_title="Page structure elements were not observed",
             technical_description=(
                 f"{len(failures)} audited pages miss one or more assessed signals: "
                 f"{', '.join(missing_signals)}."
             ),
-            client_title="Some audited pages lack clear citation-ready context",
+            client_title="Some page elements need editorial review",
             client_explanation=(
                 "The assessed pages do not consistently provide titles, summaries, headings, "
-                "and substantive public text."
+                "and public text."
             ),
             business_impact=(
-                "Clearer page context may make public facts easier to interpret and quote; "
-                "it does not predict citation."
+                "These are observations of the captured HTML, not a content-quality score; "
+                "they do not predict citations or establish Google requirements."
             ),
             implementation=(
-                "Add accurate titles, concise summaries, descriptive headings, and concrete "
-                "supporting facts to the affected pages."
+                "Review page purpose and rendered content before deciding whether "
+                "titles, summaries, headings, or "
+                "supporting facts would help its readers."
             ),
             priority=Priority.P2,
             affected_urls=sorted(failures),
@@ -384,7 +452,7 @@ def _analyze_content_citability(
             factual_claims=[
                 FactualClaim(
                     claim_id=f"{finding_id}-checks",
-                    predicate="content_citability.assessed_signals",
+                    predicate="content_structure.assessed_signals",
                     value=", ".join(missing_signals),
                     evidence_ids=evidence_ids,
                     numbers=[str(len(failures))],

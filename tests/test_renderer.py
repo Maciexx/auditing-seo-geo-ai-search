@@ -415,8 +415,8 @@ def test_renderer_has_no_rewrite_or_analysis_imports() -> None:
 def test_template_version_has_explicit_packaged_directory_mapping() -> None:
     renderer = renderer_module()
 
-    assert renderer.TEMPLATE_DIRECTORY_BY_VERSION[reports.REPORT_TEMPLATE_VERSION] == "v1"
-    assert renderer.TEMPLATE_ROOT.name == "v1"
+    assert renderer.TEMPLATE_DIRECTORY_BY_VERSION[reports.REPORT_TEMPLATE_VERSION] == "v2"
+    assert renderer.TEMPLATE_ROOT.name == "v2"
 
 
 def test_paged_components_avoid_breaks_where_practical() -> None:
@@ -625,3 +625,13 @@ def test_measurement_template_uses_localized_platform_and_separates_metadata(
     ).stdout
     assert "AI AssistantDefinitions" not in extracted
     assert "AI AssistantDefinicje" not in extracted
+
+
+def test_legacy_template_metadata_remains_reproducible():
+    renderer = renderer_module()
+    legacy = renderer.build_renderer_metadata(template_version="1.2.0")
+    assert legacy.template_digest == (
+        "bd6399eb11ac6d79cdfc7066bb5fb4cd87d4d9b44c05aa878b546284874d938d"
+    )
+    assert renderer.build_renderer_metadata().template_version == "1.3.0"
+    assert renderer.build_renderer_metadata().template_digest != legacy.template_digest

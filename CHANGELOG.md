@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Added current Google Search AI participation, preview-control and measurement guidance.
+- Added separate, provenance-bound generative AI impression imports and owner evidence requests.
+- Replaced citation-readiness formatting penalties with unscored content-structure observations;
+  retained legacy rules and immutable historical audit artifacts.
+- Separated Google Search guidance from Gemini controls and refreshed the knowledge registry.
+- Updated SEO content, authorship, media and retired rich-result guidance.
+
 ## 0.3.0
 
 - Added source-bound PageSpeed Insights and CrUX collection plus an isolated local Lighthouse

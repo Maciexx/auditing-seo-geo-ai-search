@@ -1,5 +1,5 @@
-version: "2026.09.04"
-verified_date: 2026-09-04
+version: "2026.11.09"
+verified_date: 2026-11-09
 files:
   - vendors/openai.yaml
   - vendors/google-search.yaml

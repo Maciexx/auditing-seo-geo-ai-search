@@ -355,16 +355,16 @@ def _default_scores(
     )
     titled = sum(1 for page in assessable_pages if page.title)
     described = sum(1 for page in assessable_pages if page.meta_description)
-    headed = sum(1 for page in assessable_pages if page.h1 and page.h2)
-    substantive = sum(1 for page in assessable_pages if len(page.content_text) >= 100)
-    content_findings = _finding_ids(run.findings, rule_id="content-citability-001")
+    headed = sum(1 for page in assessable_pages if page.h1)
+    substantive = sum(1 for page in assessable_pages if page.content_text.strip())
+    content_findings = _finding_ids(run.findings, rule_id="content-structure-002")
     content = calculate_readiness(
-        "Content Citability",
+        "Content Structure",
         [
             _rule_check(
                 name=name,
                 registry=registry,
-                rule_id="content-citability-001",
+                rule_id="content-structure-002",
                 as_of=as_of,
                 state=page_check_state,
                 score=(count / page_count * 100) if page_count else None,
@@ -376,7 +376,7 @@ def _default_scores(
                 ("descriptive page titles", titled),
                 ("page summaries", described),
                 ("heading structure", headed),
-                ("substantive public text", substantive),
+                ("public text observed", substantive),
             )
         ],
     )

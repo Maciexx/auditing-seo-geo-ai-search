@@ -44,6 +44,7 @@ from .models import (
     Severity,
     SitemapState,
 )
+from .owner_context import OwnerContext, SearchAIControl, search_ai_control
 from .project_models import AuditStage, ReportStatus
 from .visibility_metrics import (
     MetricWindow,
@@ -53,8 +54,10 @@ from .visibility_metrics import (
 
 ReportLocale = Literal["pl", "en"]
 REPORT_SCHEMA_VERSION = "1.2.0"
-REPORT_TEMPLATE_VERSION = "1.2.0"
-_COMPATIBLE_REPORT_TEMPLATES = {REPORT_SCHEMA_VERSION: frozenset({REPORT_TEMPLATE_VERSION})}
+REPORT_TEMPLATE_VERSION = "1.3.0"
+_COMPATIBLE_REPORT_TEMPLATES = {
+    REPORT_SCHEMA_VERSION: frozenset({"1.2.0", REPORT_TEMPLATE_VERSION})
+}
 
 
 class ReportCompatibilityError(ValueError):
@@ -297,6 +300,11 @@ class OwnerFactReportItem(FrozenReportModel):
 
 
 class OwnerContextReportSection(FrozenReportModel):
+    @property
+    def search_ai_control(self) -> SearchAIControl:
+        # Derived display only: do not alter historical serialized report fingerprints.
+        return search_ai_control(OwnerContext.model_validate(self.model_dump(mode="python")))
+
     schema_version: str
     project_id: str
     canonical_domain: str

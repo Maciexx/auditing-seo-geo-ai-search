@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -137,6 +138,10 @@ class VisibilitySnapshot(FrozenVisibilityModel):
         for metric in self.metrics:
             source = sources[metric.source_ids[0]]
             _validate_metric_source_binding(metric, source)
+            if metric.metric == "gsc.generative_ai.impressions":
+                host = _generative_property_host((*metric.definitions[3:], *metric.segments))
+                if host != self.canonical_domain:
+                    raise ValueError("generative AI property must match snapshot canonical domain")
         return self
 
 
@@ -180,6 +185,9 @@ LATEST_MONTHLY = (AggregationMode.LATEST, MetricCadence.MONTHLY)
 LATEST_POINT = (AggregationMode.LATEST, MetricCadence.POINT_IN_TIME)
 
 _CATALOG: dict[str, MetricDefinition] = {
+    "gsc.generative_ai.impressions": _definition(
+        VisibilitySource.GOOGLE_SEARCH_CONSOLE, {"impressions"}, *SUM_MONTHLY
+    ),
     "gsc.impressions": _definition(
         VisibilitySource.GOOGLE_SEARCH_CONSOLE, {"impressions"}, *SUM_MONTHLY
     ),
@@ -408,6 +416,76 @@ def _validate_platform_provenance(
                 raise ValueError("Organic Search metadata cannot assert an AI observation")
 
 
+def _generative_property_host(labels: tuple[str, ...]) -> str:
+    properties = []
+    for label in labels:
+        parts = re.split(r"[:=]", label, maxsplit=1)
+        if len(parts) == 2 and _canonical_label(parts[0]) == "gsc_property":
+            properties.append(parts[1].strip())
+    if len(properties) != 1:
+        raise ValueError("generative AI report requires exactly one explicit gsc_property")
+    prop = properties[0]
+    if prop.startswith("sc-domain:"):
+        host = prop.removeprefix("sc-domain:")
+        if host and host == normalize_canonical_domain(host) and "/" not in host:
+            return host
+    else:
+        parsed = urlsplit(prop)
+        if (
+            parsed.scheme in {"https", "http"}
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
+        ):
+            return parsed.hostname
+    raise ValueError("gsc_property must be an exact sc-domain property or HTTP URL-prefix property")
+
+
+def _validate_generative_report(
+    metric_name: str,
+    labels: tuple[str, ...],
+    report_type: str,
+    points: tuple[VisibilityMetricPoint, ...],
+) -> None:
+    """Keep Search AI impressions separate from Web; export zeros can mean unavailable."""
+    is_report = report_type == "generative-ai-performance"
+    is_metric = metric_name == "gsc.generative_ai.impressions"
+    if is_report != is_metric:
+        raise ValueError("generative AI report requires its separate impressions metric")
+    if not is_metric:
+        return
+    _generative_property_host(labels)
+    for label in labels:
+        parts = re.split(r"[:=]", label, maxsplit=1)
+        key = _canonical_label(parts[0])
+        if (
+            "surface" in canonical_metadata_tokens(key)
+            or key == "search_appearance"
+            or (
+                key not in {"gsc_property", "page", "page_url", "url"}
+                and _contains_ai_search_alias(label)
+            )
+        ):
+            raise ValueError("generative AI report does not support separate AI surface claims")
+    if any(set(canonical_metadata_tokens(label)) & {"query", "queries"} for label in labels):
+        raise ValueError("generative AI report does not support query dimensions")
+    values = _key_values(labels)
+    required = {
+        "search_type": {"web_text", "web_multimodal"},
+        "timezone": {"america_los_angeles"},
+        "report_scope": {"property", "page"},
+    }
+    for key, allowed in required.items():
+        actual = values.get(key, set())
+        if len(actual) != 1 or not actual.issubset(allowed):
+            raise ValueError(f"generative AI report requires explicit {key}")
+    if any(point.value == 0 for point in points):
+        if values.get("zero_semantics") != {"observed"}:
+            raise ValueError("export zero requires observed zero semantics; otherwise use UNKNOWN")
+
+
 def _contains_ai_search_alias(label: str) -> bool:
     tokens = canonical_metadata_tokens(label)
     token_set = set(tokens)
@@ -615,6 +693,7 @@ def _validate_metric_source_binding(
         retained_labels,
         segment_label=metric.segments[0] if metric.segments else None,
     )
+    _validate_generative_report(metric.metric, retained_labels, source.report_type, metric.points)
     if metric.points:
         _validate_source_window(metric.points, definition, source)
         _validate_monthly_temporal_coverage(
@@ -635,6 +714,9 @@ def aggregate_series(
         series,
         platform=source.platform,
         source_filters=source.filters,
+    )
+    _validate_generative_report(
+        metric_name, _metadata_items(source.filters, series), source.report_type, series.points
     )
     definition = _CATALOG[metric_name]
     if source.source_id != series.source_id:

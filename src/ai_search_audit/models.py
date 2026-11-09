@@ -90,6 +90,8 @@ class Page(AuditModel):
     canonical: str | None = None
     hreflang: dict[str, str] = Field(default_factory=dict)
     robots_directives: list[str] = Field(default_factory=list)
+    google_robots_directives: list[str] | None = None
+    data_nosnippet_count: int = Field(default=0, ge=0)
     internal_links: list[str] = Field(default_factory=list)
     sitemap_references: list[str] = Field(default_factory=list)
     language: str | None = None

@@ -1,0 +1,13 @@
+<section class="cover">
+  <div class="cover-mark">{{ t.cover_mark }}</div>
+  <div class="cover-copy">
+    <p class="eyebrow">{{ t.cover_eyebrow }}</p>
+    <h1>{{ data.brand }}</h1>
+    <p class="cover-domain">{{ data.target_domain }}</p>
+    <p class="cover-summary">{{ t.cover_summary }}</p>
+  </div>
+  <div class="cover-meta">
+    <span>{{ t.audit_date }}</span>
+    <strong>{{ data.audit_timestamp.strftime("%Y-%m-%d") }}</strong>
+  </div>
+</section>

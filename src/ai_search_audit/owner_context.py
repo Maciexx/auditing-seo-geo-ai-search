@@ -6,6 +6,7 @@ from collections.abc import Collection
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal, TypeAlias, cast
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -27,6 +28,10 @@ ScalarFactValue: TypeAlias = str | int | float | bool | None
 
 
 class OwnerFactField(StrEnum):
+    SEARCH_AI_PROPERTY = "search_ai_property"
+    SEARCH_AI_SELECTED = "search_ai_selected"
+    SEARCH_AI_EFFECTIVE = "search_ai_effective"
+    SEARCH_AI_PARENT = "search_ai_parent"
     CANONICAL_ENTITY = "canonical_entity"
     MARKET = "market"
     LANGUAGE = "language"
@@ -163,3 +168,88 @@ def derive_report_status(
     if all_approved and not unresolved:
         return ReportStatus.CLIENT_VALIDATED
     return ReportStatus.CLIENT_CONTEXT_DRAFT
+
+
+class SearchAIControl(FrozenOwnerContextModel):
+    selected: Literal["include", "exclude", "inherit", "unknown"] = "unknown"
+    effective: Literal["include", "exclude", "unknown"] = "unknown"
+    property: str | None = None
+    parent: str | None = None
+    as_of: date | None = None
+    source_ids: tuple[str, ...] = ()
+
+
+def search_ai_control(context: OwnerContext | None) -> SearchAIControl:
+    """Project complete, approved owner facts; crawling never establishes this setting."""
+    if context is None:
+        return SearchAIControl()
+    fields = {"search_ai_property", "search_ai_selected", "search_ai_effective", "search_ai_parent"}
+    facts = [fact for fact in context.facts if fact.field.value in fields]
+    by_field = {fact.field.value: fact for fact in facts}
+    if (
+        len(by_field) != len(facts)
+        or not facts
+        or any(
+            fact.approval_state is not FactApprovalState.APPROVED
+            or fact.as_of is None
+            or fact.as_of > context.processed_at.date()
+            or fact.conflict_ids
+            for fact in facts
+        )
+        or len({fact.as_of for fact in facts}) != 1
+    ):
+        return SearchAIControl()
+    values = {key: fact.value for key, fact in by_field.items()}
+    selected, effective = values.get("search_ai_selected"), values.get("search_ai_effective")
+    prop, parent = values.get("search_ai_property"), values.get("search_ai_parent")
+    if (
+        selected not in {"include", "exclude", "inherit"}
+        or effective not in {"include", "exclude"}
+        or not isinstance(prop, str)
+        or (selected == "inherit" and not isinstance(parent, str))
+        or (selected != "inherit" and (selected != effective or parent is not None))
+    ):
+        return SearchAIControl()
+
+    def property_host(value: str) -> str | None:
+        if value.startswith("sc-domain:"):
+            host = value.removeprefix("sc-domain:")
+            return host if host and "/" not in host and ":" not in host else None
+        try:
+            parsed = urlsplit(value)
+            _ = parsed.port
+        except ValueError:
+            return None
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.username
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        return parsed.hostname
+
+    if property_host(prop) != context.canonical_domain:
+        return SearchAIControl()
+    if isinstance(parent, str):
+        parent_host = property_host(parent)
+        if not parent_host or parent.rstrip("/") == prop.rstrip("/"):
+            return SearchAIControl()
+        if parent.startswith("sc-domain:"):
+            if not (
+                context.canonical_domain == parent_host
+                or context.canonical_domain.endswith("." + parent_host)
+            ):
+                return SearchAIControl()
+        elif prop.startswith("sc-domain:") or not prop.startswith(parent.rstrip("/") + "/"):
+            return SearchAIControl()
+    return SearchAIControl.model_validate(
+        {
+            "selected": selected,
+            "effective": effective,
+            "property": prop,
+            "parent": parent,
+            "as_of": facts[0].as_of,
+            "source_ids": tuple(sorted({fact.provenance.source_id for fact in facts})),
+        }
+    )

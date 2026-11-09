@@ -1033,3 +1033,21 @@ def test_crawler_rejects_redirect_to_unrelated_public_host() -> None:
     assert result.pages == []
     assert "attacker.example" not in requested_hosts
     assert any("canonical host" in warning.lower() for warning in result.warnings)
+
+
+def test_google_preview_directives_preserve_bot_scope():
+    crawler = NativeCrawler(AuditConfig(domain="example.com"), PRODUCTS, resolver=public_resolver)
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://example.com/"),
+        headers=[
+            ("X-Robots-Tag", "bingbot: noindex, nosnippet"),
+            ("X-Robots-Tag", "googlebot: max-snippet: 40"),
+        ],
+        text='<meta name="bingbot" content="nosnippet"><meta name="robots" content="follow">'
+        "<span data-nosnippet>Private preview</span>",
+    )
+    page, _, _ = crawler._parse_page(response, 0, [])
+    assert page.google_robots_directives == ["follow", "max-snippet: 40"]
+    assert page.indexable is True
+    assert page.data_nosnippet_count == 1

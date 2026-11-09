@@ -684,6 +684,8 @@ class NativeCrawler:
                             "canonical": page.canonical,
                             "indexable": page.indexable,
                             "robots_directives": page.robots_directives,
+                            "google_robots_directives": page.google_robots_directives,
+                            "data_nosnippet_count": page.data_nosnippet_count,
                             "indexability_reasons": page.indexability_reasons,
                             "json_ld_errors": [
                                 item.model_dump(mode="json") for item in page.json_ld_errors
@@ -713,18 +715,37 @@ class NativeCrawler:
             if language and href:
                 hreflang[str(language)] = urljoin(final_url, str(href))
         robots_directives: list[str] = []
+        google_directives: list[str] = []
         for meta in soup.find_all("meta"):
-            if str(meta.get("name", "")).lower() in {"robots", "googlebot", "bingbot"}:
-                robots_directives.extend(
+            scope = str(meta.get("name", "")).lower()
+            if scope in {"robots", "googlebot", "bingbot"}:
+                directives = [
                     item.strip().lower()
                     for item in str(meta.get("content", "")).split(",")
                     if item.strip()
-                )
-        x_robots_tag = response.headers.get("x-robots-tag")
-        if x_robots_tag:
-            robots_directives.extend(
-                item.strip().lower() for item in x_robots_tag.split(",") if item.strip()
-            )
+                ]
+                robots_directives.extend(directives)
+                if scope in {"robots", "googlebot"}:
+                    google_directives.extend(directives)
+        for header in response.headers.get_list("x-robots-tag"):
+            scope = "robots"
+            for raw in header.lower().split(","):
+                directive = raw.strip()
+                scoped = re.match(r"^([a-z][a-z0-9_-]*):\s*(.*)$", directive)
+                # Directive values (max-snippet: N, unavailable_after: date) are not bot scopes.
+                if scoped and scoped.group(1) not in {
+                    "max-snippet",
+                    "max-image-preview",
+                    "max-video-preview",
+                    "unavailable_after",
+                }:
+                    scope, directive = scoped.groups()
+                if directive:
+                    robots_directives.append(directive)
+                    if scope in {"robots", "googlebot"}:
+                        google_directives.append(directive)
+        if "none" in google_directives:
+            google_directives.extend(["noindex", "nofollow"])
         json_ld: list[dict[str, Any]] = []
         json_ld_errors: list[JsonLdParseError] = []
         for script in soup.find_all("script", type="application/ld+json"):
@@ -755,7 +776,7 @@ class NativeCrawler:
         indexable = 200 <= status_code < 300
         if not indexable:
             reasons.append(f"HTTP status {status_code}")
-        if "noindex" in robots_directives:
+        if "noindex" in google_directives:
             indexable = False
             reasons.append("meta robots noindex")
         if indexable:
@@ -780,6 +801,10 @@ class NativeCrawler:
             canonical=canonical,
             hreflang=hreflang,
             robots_directives=robots_directives,
+            google_robots_directives=google_directives,
+            data_nosnippet_count=len(
+                soup.select("span[data-nosnippet], div[data-nosnippet], section[data-nosnippet]")
+            ),
             internal_links=internal_links,
             sitemap_references=sitemap_urls,
             language=str(soup.html.get("lang")) if soup.html and soup.html.get("lang") else None,

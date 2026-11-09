@@ -83,7 +83,7 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
         "ai-prompts.json",
     }
     assert expected == {path.name for path in tmp_path.iterdir()}
-    assert run.audit_engine_version == "0.3.0"
+    assert run.audit_engine_version == "0.4.0"
     assert run.configuration["entity_classification_policy"] == "2.0.0"
     assert run.ruleset_version == load_registry(default_registry_root()).version
     assert run.adapter_versions["public-research"] == "0.1.0"
@@ -92,7 +92,7 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
     assert scores["Measurement Maturity"].value is None
     assert scores["Observed AI Visibility"].state is DataState.UNAVAILABLE
     assert scores["Technical Search Readiness"].total_checks >= 3
-    assert scores["Content Citability"].total_checks >= 3
+    assert scores["Content Structure"].total_checks >= 3
     assert scores["Technical Search Readiness"].confidence <= 1
     assert all(score.coverage <= 1 for score in scores.values())
     prompt_pack = json.loads((tmp_path / "ai-prompts.json").read_text())
@@ -100,7 +100,7 @@ def test_public_audit_writes_all_required_artifacts(tmp_path: Path) -> None:
     assert prompt_pack["prompts"]
     report = json.loads((tmp_path / "client-report-data.json").read_text())
     assert report["report_schema_version"] == "1.2.0"
-    assert report["report_template_version"] == "1.2.0"
+    assert report["report_template_version"] == "1.3.0"
     assert report["renderer"]["renderer_version"] == "69.0"
     assert report["evidence_appendix"]
     assert (tmp_path / "client-report.pdf").stat().st_mtime_ns >= (
@@ -395,8 +395,9 @@ def test_non_2xx_html_page_is_excluded_from_page_quality_denominators(
     checks = {check.name: check for check in technical.checks}
     assert checks["public crawl and indexability"].score == 100
     assert checks["canonical annotations"].score == 100
-    content = next(score for score in run.scores if score.name == "Content Citability")
-    assert all(check.score == 100 for check in content.checks)
+    content = next(score for score in run.scores if score.name == "Content Structure")
+    assert content.value is None
+    assert all(check.score is None for check in content.checks)
 
 
 def test_partial_invalid_json_ld_scores_proportionally(tmp_path: Path) -> None:
